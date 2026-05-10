@@ -1,0 +1,39 @@
+{
+  "version": "1",
+  "name": "rebase-collision",
+  "description": "Group N worktree fingerprints into coordination episodes instead of noisy pairwise alerts.",
+  "inputs": {
+    "fingerprints": "array",
+    "plans": "array",
+    "graphFacts": "array",
+    "activeDecisions": "array"
+  },
+  "outputs": {
+    "episodes": "array"
+  },
+  "nodes": [
+    {
+      "id": "cluster-surfaces",
+      "type": "graph.connected_components",
+      "with": {
+        "groupBy": ["primarySurface", "affectedWorktreeIds"]
+      }
+    },
+    {
+      "id": "classify-risk",
+      "type": "llm.debate",
+      "with": {
+        "roles": ["proposer", "skeptic", "judge"],
+        "emitConfidence": true,
+        "emitEvidence": true
+      }
+    },
+    {
+      "id": "emit-episodes",
+      "type": "json.schema",
+      "with": {
+        "schema": "CoordinationEpisode[]"
+      }
+    }
+  ]
+}

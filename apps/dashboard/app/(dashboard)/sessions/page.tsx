@@ -24,6 +24,14 @@ export default async function SessionsPage() {
         (publication) => publication.conflictId === activeConflict.id
       )
     : undefined;
+  const activeEpisode = activeConflict
+    ? snapshot.coordinationEpisodes.find((episode) =>
+        episode.conflictIds.includes(activeConflict.id)
+      )
+    : undefined;
+  const activeWorkOrders = activeEpisode
+    ? snapshot.workOrders.filter((order) => order.episodeId === activeEpisode.id)
+    : [];
   const lifecycle = buildLifecycle(snapshot, activeConflict?.id);
   const integrationActive = snapshot.agents.some(
     (agent) => agent.coordinationRole === "integration"
@@ -167,6 +175,27 @@ export default async function SessionsPage() {
                     <p>Adapter sessions keep waiting until the owner publishes shape.</p>
                   </div>
                 ) : null}
+                {activeEpisode ? (
+                  <div className="evidence-card">
+                    <span className="muted small">Coordination episode</span>
+                    <p>
+                      {activeEpisode.affectedAgentSessionIds.length} agents ·{" "}
+                      {activeWorkOrders.length} work orders · {activeEpisode.status}
+                    </p>
+                  </div>
+                ) : null}
+                {activeWorkOrders.length > 0 ? (
+                  <div className="evidence-grid evidence-grid-compact">
+                    {activeWorkOrders.slice(0, 3).map((order) => (
+                      <div className="evidence-card" key={order.id}>
+                        <span className="muted small">
+                          {order.role.replace("_", " ")} · {order.status}
+                        </span>
+                        <p>{order.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="evidence-grid evidence-grid-compact">
                   {activeConflict.riskReasons.slice(0, 2).map((reason) => (
                     <div
@@ -237,6 +266,14 @@ function buildLifecycle(snapshot: Snapshot, conflictId: string | undefined): Tim
   const relatedInterventions = conflictId
     ? snapshot.interventions.filter((item) => item.conflictId === conflictId)
     : [];
+  const relatedEpisode = conflictId
+    ? snapshot.coordinationEpisodes.find((episode) =>
+        episode.conflictIds.includes(conflictId)
+      )
+    : undefined;
+  const relatedWorkOrders = relatedEpisode
+    ? snapshot.workOrders.filter((order) => order.episodeId === relatedEpisode.id)
+    : [];
   const adapterResume = relatedInterventions.find(
     (item) =>
       item.directive?.role === "adapter" &&
@@ -297,6 +334,16 @@ function buildLifecycle(snapshot: Snapshot, conflictId: string | undefined): Tim
         : "OpenAI or deterministic fallback verdicts show here.",
       done: Boolean(activeConflict?.classification),
       tone: activeConflict?.classification ? "done" : "muted"
+    },
+    {
+      title: relatedEpisode
+        ? `Episode: ${relatedEpisode.affectedAgentSessionIds.length} agents`
+        : "Coordination episode",
+      detail: relatedEpisode
+        ? `${relatedEpisode.surface} · ${relatedWorkOrders.length} active work orders`
+        : "Shared-surface collisions become one owner/adapters episode.",
+      done: Boolean(relatedEpisode),
+      tone: relatedEpisode ? "done" : activeConflict ? "waiting" : "muted"
     },
     {
       title: activeDecision

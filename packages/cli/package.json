@@ -16,6 +16,7 @@
   "dependencies": {
     "@rebase/coordinator": "workspace:*",
     "execa": "^9.6.1",
-    "nanoid": "^5.1.6"
+    "nanoid": "^5.1.6",
+    "rocketride": "^1.0.6"
   }
 }

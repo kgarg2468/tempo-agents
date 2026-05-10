@@ -118,7 +118,8 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
     "rebase_checkpoint",
     {
       title: "Rebase Checkpoint",
-      description: "Check current Rebase risk and unread notifications.",
+      description:
+        "Check current Rebase risk, unread notifications, coordination episodes, and work orders.",
       inputSchema: {
         sessionId: z.string(),
         publishContract: z
@@ -139,7 +140,7 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
     {
       title: "Rebase Session State",
       description:
-        "Return current session, local evidence packet id, active risks, and queued directions.",
+        "Return current session, local evidence packet id, active risks, queued directions, and queued work orders.",
       inputSchema: {
         sessionId: z.string()
       }
@@ -164,7 +165,8 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
     "rebase_fetch_intervention",
     {
       title: "Fetch Rebase Intervention",
-      description: "Fetch user-approved advisory direction queued for this session.",
+      description:
+        "Fetch user-approved advisory directions and delegated work orders queued for this session.",
       inputSchema: {
         sessionId: z.string()
       }
@@ -177,7 +179,7 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
     {
       title: "Wait For Rebase Direction",
       description:
-        "Wait briefly for a user-approved dashboard or chat direction for this session.",
+        "Wait briefly for a user-approved dashboard/chat direction or delegated work order for this session.",
       inputSchema: {
         sessionId: z.string(),
         timeoutMs: z.number().int().min(0).max(120000).optional()

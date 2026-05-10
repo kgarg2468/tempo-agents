@@ -158,6 +158,25 @@ export async function createCoordinatorApp(
       )
   }));
 
+  app.get("/api/coordination-episodes", async () => ({
+    coordinationEpisodes: store
+      .listCoordinationEpisodes(repoId)
+      .filter((episode) => episode.status !== "resolved")
+  }));
+
+  app.get("/api/work-orders", async () => ({
+    workOrders: store
+      .listWorkOrders(repoId)
+      .filter((workOrder) =>
+        store
+          .listCoordinationEpisodes(repoId)
+          .some(
+            (episode) =>
+              episode.id === workOrder.episodeId && episode.status !== "resolved"
+          )
+      )
+  }));
+
   app.get("/api/decisions", async () => ({
     decisions: store
       .listConflictDecisions(repoId)

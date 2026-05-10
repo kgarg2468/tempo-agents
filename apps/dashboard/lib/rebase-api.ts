@@ -2,6 +2,7 @@ import type {
   AgentSession,
   Advisory,
   CloudEscalationPacket,
+  CoordinationEpisode,
   ConflictDecision,
   ContractPublication,
   EvidencePacket,
@@ -12,7 +13,8 @@ import type {
   RebaseGraphEdge,
   RebaseGraphNode,
   RebaseRepo,
-  RebaseWorktree
+  RebaseWorktree,
+  WorkOrder
 } from "@rebase/shared";
 
 export interface RebaseSettings {
@@ -35,6 +37,8 @@ export interface RebaseSnapshot {
   conflicts: RebaseConflict[];
   advisories: Advisory[];
   interventions: Intervention[];
+  coordinationEpisodes: CoordinationEpisode[];
+  workOrders: WorkOrder[];
   decisions: ConflictDecision[];
   publications: ContractPublication[];
   evidencePackets: EvidencePacket[];
@@ -62,6 +66,8 @@ export async function getRebaseSnapshot(): Promise<RebaseSnapshot> {
     conflicts,
     advisories,
     interventions,
+    coordinationEpisodes,
+    workOrders,
     decisions,
     publications,
     evidencePackets,
@@ -79,6 +85,10 @@ export async function getRebaseSnapshot(): Promise<RebaseSnapshot> {
       fetchJson<{ conflicts: RebaseConflict[] }>("/api/conflicts"),
       fetchJson<{ advisories: Advisory[] }>("/api/advisories"),
       fetchJson<{ interventions: Intervention[] }>("/api/interventions"),
+      fetchJson<{ coordinationEpisodes: CoordinationEpisode[] }>(
+        "/api/coordination-episodes"
+      ),
+      fetchJson<{ workOrders: WorkOrder[] }>("/api/work-orders"),
       fetchJson<{ decisions: ConflictDecision[] }>("/api/decisions"),
       fetchJson<{ publications: ContractPublication[] }>(
         "/api/contract-publications"
@@ -108,6 +118,10 @@ export async function getRebaseSnapshot(): Promise<RebaseSnapshot> {
     conflicts: valueOr(conflicts, { conflicts: [] }).conflicts,
     advisories: valueOr(advisories, { advisories: [] }).advisories,
     interventions: valueOr(interventions, { interventions: [] }).interventions,
+    coordinationEpisodes: valueOr(coordinationEpisodes, {
+      coordinationEpisodes: []
+    }).coordinationEpisodes,
+    workOrders: valueOr(workOrders, { workOrders: [] }).workOrders,
     decisions: valueOr(decisions, { decisions: [] }).decisions,
     publications: valueOr(publications, { publications: [] }).publications,
     evidencePackets: valueOr(evidencePackets, { evidencePackets: [] })
@@ -156,6 +170,8 @@ function disconnectedSnapshot(): RebaseSnapshot {
     conflicts: [],
     advisories: [],
     interventions: [],
+    coordinationEpisodes: [],
+    workOrders: [],
     decisions: [],
     publications: [],
     evidencePackets: [],
@@ -316,6 +332,46 @@ function demoSnapshot(connected: boolean): RebaseSnapshot {
           "Coordinate the Task model shape first, then update routes and TaskCard props from that agreed contract.",
         status: "draft",
         createdAt: now
+      }
+    ],
+    coordinationEpisodes: [
+      {
+        id: "episode-task-contract",
+        repoId: repo.id,
+        surface: "Task contract",
+        status: "coordinating",
+        risk: "medium",
+        confidence: 0.8,
+        affectedWorktreeIds: ["wt-a", "wt-b"],
+        affectedAgentSessionIds: ["agent-a"],
+        conflictIds: ["conflict-task-model"],
+        ownerAgentSessionId: "agent-a",
+        rocketRideRunIds: ["rr-demo-run"],
+        createdAt: now,
+        updatedAt: now
+      }
+    ],
+    workOrders: [
+      {
+        id: "work-order-demo",
+        repoId: repo.id,
+        episodeId: "episode-task-contract",
+        agentSessionId: "agent-a",
+        role: "contract_owner",
+        status: "queued",
+        revision: 1,
+        title: "Own Task contract",
+        summary:
+          "Codex A owns Task contract. Publish the canonical contract, then checkpoint before downstream edits.",
+        requiredContract:
+          "Codex A owns Task contract; preserve that public shape before dependent edits.",
+        allowedFiles: [],
+        blockedFiles: [],
+        sharedFiles: ["src/db/schema.ts"],
+        nextCheckpoint:
+          "Publish the contract shape with rebase_checkpoint before dependent edits.",
+        createdAt: now,
+        updatedAt: now
       }
     ],
     decisions: [],

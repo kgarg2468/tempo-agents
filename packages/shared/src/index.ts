@@ -272,7 +272,9 @@ export const graphNodeKindSchema = z.enum([
   "file",
   "surface",
   "conflict",
-  "decision"
+  "decision",
+  "episode",
+  "work_order"
 ]);
 export type GraphNodeKind = z.infer<typeof graphNodeKindSchema>;
 
@@ -329,6 +331,73 @@ export const interventionDirectiveRoleSchema = z.enum([
 export type InterventionDirectiveRole = z.infer<
   typeof interventionDirectiveRoleSchema
 >;
+
+export const mergeContractSchema = z.object({
+  id: z.string().min(1),
+  repoId: z.string().min(1),
+  episodeId: z.string().min(1),
+  surface: z.string().min(1),
+  ownerAgentSessionId: z.string().min(1).optional(),
+  summary: z.string().min(1).max(4000),
+  files: z.array(z.string().min(1)).default([]),
+  sourcePublicationId: z.string().min(1).optional(),
+  updatedAt: z.number()
+});
+export type MergeContract = z.infer<typeof mergeContractSchema>;
+
+export const coordinationEpisodeSchema = z.object({
+  id: z.string().min(1),
+  repoId: z.string().min(1),
+  surface: z.string().min(1),
+  status: z.enum([
+    "open",
+    "coordinating",
+    "verifying",
+    "safe",
+    "blocked",
+    "resolved"
+  ]),
+  risk: riskLevelSchema,
+  confidence: z.number().min(0).max(1),
+  affectedWorktreeIds: z.array(z.string().min(1)),
+  affectedAgentSessionIds: z.array(z.string().min(1)),
+  conflictIds: z.array(z.string().min(1)),
+  ownerAgentSessionId: z.string().min(1).optional(),
+  mergeContract: mergeContractSchema.optional(),
+  rocketRideRunIds: z.array(z.string().min(1)).default([]),
+  createdAt: z.number(),
+  updatedAt: z.number()
+});
+export type CoordinationEpisode = z.infer<typeof coordinationEpisodeSchema>;
+
+export const workOrderSchema = z.object({
+  id: z.string().min(1),
+  repoId: z.string().min(1),
+  episodeId: z.string().min(1),
+  agentSessionId: z.string().min(1),
+  role: interventionDirectiveRoleSchema,
+  status: z.enum([
+    "queued",
+    "active",
+    "fetched",
+    "acknowledged",
+    "completed",
+    "superseded"
+  ]),
+  revision: z.number().int().min(1),
+  title: z.string().min(1).max(200),
+  summary: z.string().min(1).max(2000),
+  requiredContract: z.string().min(1).max(4000).optional(),
+  allowedFiles: z.array(z.string().min(1)).default([]),
+  blockedFiles: z.array(z.string().min(1)).default([]),
+  sharedFiles: z.array(z.string().min(1)).default([]),
+  nextCheckpoint: z.string().min(1).max(500),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  deliveredAt: z.number().optional(),
+  acknowledgedAt: z.number().optional()
+});
+export type WorkOrder = z.infer<typeof workOrderSchema>;
 
 export const interventionDirectiveSchema = z.object({
   role: interventionDirectiveRoleSchema,

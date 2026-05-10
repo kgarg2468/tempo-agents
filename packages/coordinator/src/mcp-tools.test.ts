@@ -255,7 +255,7 @@ describe("Rebase MCP tool handlers", () => {
     store.close();
   });
 
-  it("keeps manual agents waiting across timeout and delivers a later decision", async () => {
+  it("delivers an automatic work order before a manual decision, then later delivers the decision", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-manual-handoff-"));
     const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
     const handlers = createMcpToolHandlers({
@@ -296,9 +296,9 @@ describe("Rebase MCP tool handlers", () => {
       sessionId: adapter.sessionId,
       timeoutMs: 1
     });
-    expect(firstWait.timedOut).toBe(true);
-    expect(firstWait.keepWaiting).toBe(true);
-    expect(firstWait.choices[0]?.title).toBe("Task contract overlap");
+    expect(firstWait.timedOut).toBe(false);
+    expect(firstWait.keepWaiting).toBe(false);
+    expect(firstWait.workOrders[0]?.role).toBe("adapter");
     expect(firstWait.directions).toEqual([]);
 
     handlers.recordDecision({
@@ -734,6 +734,99 @@ describe("Rebase MCP tool handlers", () => {
     expect(delivered.timedOut).toBe(false);
     expect(delivered.directions[0]?.id).toBe("int-wait");
     expect(store.listQueuedInterventions("repo-1", join.sessionId)).toEqual([]);
+
+    store.close();
+  });
+
+  it("returns work orders through checkpoint and wait so every affected agent gets delegated next steps", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-work-orders-"));
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+
+    const owner = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapterA = handlers.join({
+      cwd: path.join(dir, "reminders"),
+      agentKind: "codex",
+      displayName: "reminders-agent"
+    });
+    const adapterB = handlers.join({
+      cwd: path.join(dir, "bulk-edit"),
+      agentKind: "codex",
+      displayName: "bulk-edit-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-ab",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.86,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapterA.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both fingerprints touch Task type"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertConflict({
+      id: "conflict-bc",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.82,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [adapterA.worktreeId, adapterB.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both fingerprints touch Task type"],
+      riskReasons: [],
+      createdAt: 1778000000001,
+      updatedAt: 1778000000001
+    });
+
+    handlers.recordDecision({
+      sessionId: owner.sessionId,
+      conflictId: "conflict-ab",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection: "labels-agent owns the Task contract.",
+      ownerAgentSessionId: owner.sessionId,
+      createdBy: "agent"
+    });
+
+    const ownerCheckpoint = handlers.checkpoint({ sessionId: owner.sessionId });
+    expect(ownerCheckpoint.workOrders).toHaveLength(1);
+    expect(ownerCheckpoint.workOrders[0]?.role).toBe("contract_owner");
+    expect(ownerCheckpoint.coordinationEpisodes[0]?.affectedAgentSessionIds).toHaveLength(3);
+    expect(ownerCheckpoint.coordinationEpisodes[0]?.affectedAgentSessionIds).toEqual(
+      expect.arrayContaining([
+        owner.sessionId,
+        adapterA.sessionId,
+        adapterB.sessionId
+      ])
+    );
+
+    const adapterWait = await handlers.waitForDirection({
+      sessionId: adapterB.sessionId,
+      timeoutMs: 1
+    });
+    expect(adapterWait.workOrders).toHaveLength(1);
+    expect(adapterWait.workOrders[0]?.role).toBe("adapter");
+    expect(adapterWait.workOrders[0]?.summary).toContain("labels-agent owns Task contract");
+    expect(adapterWait.keepWaiting).toBe(false);
 
     store.close();
   });

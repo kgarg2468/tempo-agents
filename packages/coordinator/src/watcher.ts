@@ -18,6 +18,7 @@ import {
 } from "./graph.js";
 import { withDebate } from "./debate.js";
 import { createCloudEscalationCandidate } from "./escalation.js";
+import { buildCoordinationEpisodes } from "./episodes.js";
 
 export interface RebaseWatcherOptions {
   repoRoot: string;
@@ -261,6 +262,33 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
           affectedSurfaces: conflict.affectedSurfaces
         });
       }
+    }
+
+    const coordination = buildCoordinationEpisodes({
+      repoId: this.options.repoId,
+      conflicts: this.options.store.listConflicts(this.options.repoId),
+      agents: this.options.store.listAgentSessions(this.options.repoId),
+      decisions: this.options.store.listConflictDecisions(this.options.repoId),
+      publications: this.options.store.listContractPublications(this.options.repoId),
+      createdAt: this.now()
+    });
+    const activeEpisodeIds = new Set(coordination.episodes.map((episode) => episode.id));
+    for (const episode of coordination.episodes) {
+      this.options.store.upsertCoordinationEpisode(episode);
+    }
+    for (const episode of this.options.store.listCoordinationEpisodes(
+      this.options.repoId
+    )) {
+      if (episode.status !== "resolved" && !activeEpisodeIds.has(episode.id)) {
+        this.options.store.upsertCoordinationEpisode({
+          ...episode,
+          status: "resolved",
+          updatedAt: this.now()
+        });
+      }
+    }
+    for (const workOrder of coordination.workOrders) {
+      this.options.store.upsertWorkOrder(workOrder);
     }
   }
 

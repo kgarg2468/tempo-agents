@@ -1,0 +1,45 @@
+{
+  "version": "1",
+  "name": "rebase-work-order",
+  "description": "Create per-agent owner/adapter work orders for every affected Codex session in a coordination episode.",
+  "inputs": {
+    "episode": "object",
+    "agents": "array",
+    "mergeContract": "object",
+    "plans": "array",
+    "activeDiffs": "array"
+  },
+  "outputs": {
+    "workOrders": "array"
+  },
+  "nodes": [
+    {
+      "id": "elect-owner",
+      "type": "policy.owner_election",
+      "with": {
+        "preferActiveDecision": true,
+        "fallback": "earliestJoinedAgent"
+      }
+    },
+    {
+      "id": "build-merge-contract",
+      "type": "json.contract",
+      "with": {
+        "includeFields": true,
+        "includeDbColumns": true,
+        "includeApiFields": true,
+        "includeComponentProps": true
+      }
+    },
+    {
+      "id": "assign-work-orders",
+      "type": "policy.work_order",
+      "with": {
+        "roles": ["contract_owner", "adapter"],
+        "includeAllowedFiles": true,
+        "includeBlockedFiles": true,
+        "includeNextCheckpoint": true
+      }
+    }
+  ]
+}

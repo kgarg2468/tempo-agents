@@ -4,6 +4,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import {
+  checkRocketRideRuntime,
   loadRebaseEnv,
   parseRebaseEnv,
   prepareRuntime,
@@ -136,5 +137,45 @@ describe("prepareRuntime", () => {
       OPENAI_MODEL: "gpt-5.4-mini",
       EMPTY: ""
     });
+  });
+
+  it("preflights RocketRide using ROCKETRIDE_URI and reports a clear offline result", async () => {
+    const result = await checkRocketRideRuntime({
+      rocketRideUri: "http://127.0.0.1:9",
+      fetchImpl: async () => {
+        throw new TypeError("connection refused");
+      }
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      uri: "http://127.0.0.1:9",
+      message:
+        "RocketRide is offline at http://127.0.0.1:9. Start RocketRide locally or set ROCKETRIDE_URI."
+    });
+  });
+
+  it("preflights RocketRide through the SDK when an API key is configured", async () => {
+    const calls: string[] = [];
+
+    const result = await checkRocketRideRuntime({
+      rocketRideUri: "ws://127.0.0.1:5565",
+      apiKey: "rr-local",
+      clientFactory: () => ({
+        async connect() {
+          calls.push("connect");
+        },
+        async ping() {
+          calls.push("ping");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        }
+      })
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("SDK ping succeeded");
+    expect(calls).toEqual(["connect", "ping", "disconnect"]);
   });
 });

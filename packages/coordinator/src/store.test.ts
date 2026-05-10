@@ -246,6 +246,67 @@ describe("RebaseStore", () => {
     second.close();
   });
 
+  it("persists coordination episodes and queued work orders", () => {
+    const store = createRebaseStore(":memory:");
+
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "coordinating",
+      risk: "high",
+      confidence: 0.88,
+      affectedWorktreeIds: ["wt-a", "wt-b", "wt-c"],
+      affectedAgentSessionIds: ["agent-a", "agent-b", "agent-c"],
+      conflictIds: ["conflict-ab", "conflict-bc"],
+      ownerAgentSessionId: "agent-a",
+      mergeContract: {
+        id: "merge-contract-1",
+        repoId: "repo-1",
+        episodeId: "episode-1",
+        surface: "Task contract",
+        ownerAgentSessionId: "agent-a",
+        summary: "Task keeps title:string and adds label.",
+        files: ["src/shared/task.ts"],
+        updatedAt: 1778000000009
+      },
+      rocketRideRunIds: ["rocketride-run-1"],
+      createdAt: 1778000000008,
+      updatedAt: 1778000000009
+    });
+    store.upsertWorkOrder({
+      id: "work-order-1",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: "agent-b",
+      role: "adapter",
+      status: "queued",
+      revision: 2,
+      title: "Adapt to Task contract",
+      summary: "Agent A owns Task contract. Adapt this worktree.",
+      requiredContract: "Task keeps title:string and adds label.",
+      allowedFiles: [],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after adapting to the owner contract.",
+      createdAt: 1778000000010,
+      updatedAt: 1778000000010
+    });
+
+    expect(store.listCoordinationEpisodes("repo-1")[0]?.mergeContract?.summary).toContain(
+      "title:string"
+    );
+    expect(store.listQueuedWorkOrders("repo-1", "agent-b")).toHaveLength(1);
+    store.markWorkOrderFetched("work-order-1", 1778000000011);
+    expect(store.listQueuedWorkOrders("repo-1", "agent-b")).toEqual([]);
+    expect(store.listWorkOrders("repo-1")[0]).toMatchObject({
+      id: "work-order-1",
+      status: "fetched",
+      deliveredAt: 1778000000011
+    });
+    store.close();
+  });
+
   it("persists evidence packets and prunes expired local evidence", async () => {
     const store = createRebaseStore(":memory:");
     store.upsertHookEvent({

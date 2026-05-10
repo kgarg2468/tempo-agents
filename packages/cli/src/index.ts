@@ -8,6 +8,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import { createCoordinatorApp } from "@rebase/coordinator";
 import {
+  checkRocketRideRuntime,
   loadRebaseEnv,
   prepareRuntime,
   readRuntimeState,
@@ -46,6 +47,14 @@ async function runStart(args: Set<string>) {
     prompts
   });
   await loadRebaseEnv(runtime.envPath);
+  const rocketRide = await checkRocketRideRuntime({
+    rocketRideUri: runtime.rocketRideUri
+  });
+  if (!rocketRide.ok && !args.has("--skip-rocketride")) {
+    throw new Error(
+      `${rocketRide.message}\nRebase uses RocketRide pipelines for merge-aware coordination. Start RocketRide or rerun with --skip-rocketride for local coordinator development only.`
+    );
+  }
   const app = await createCoordinatorApp({
     repoRoot: runtime.repoRoot,
     dbPath: runtime.dbPath,
@@ -59,6 +68,9 @@ async function runStart(args: Set<string>) {
 
   console.log(`Rebase coordinator: ${runtime.coordinatorUrl}`);
   console.log(`Rebase env file: ${runtime.envPath}`);
+  console.log(
+    `RocketRide: ${rocketRide.ok ? "online" : "offline"} (${runtime.rocketRideUri})`
+  );
   let dashboardProcess: ReturnType<typeof spawn> | null = null;
   if (!noDashboard) {
     dashboardProcess = await startDashboard(runtime);
@@ -137,6 +149,7 @@ async function runStatus() {
   console.log(`Coordinator: ${health?.ok ? "online" : "offline"} (${runtime.coordinatorUrl})`);
   console.log(`Dashboard: ${runtime.dashboardUrl}`);
   console.log(`MCP: ${runtime.mcpUrl}`);
+  console.log(`RocketRide: ${runtime.rocketRideUri}`);
   console.log(`Agents: ${agents?.agents.length ?? 0}`);
   console.log(
     `Risks: ${riskCounts.high} high, ${riskCounts.medium} medium, ${riskCounts.low} low`

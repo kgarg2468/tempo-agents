@@ -1,0 +1,52 @@
+{
+  "version": "1",
+  "name": "rebase-fingerprint",
+  "description": "Build merge-aware fingerprints from a worktree diff, hook evidence, and repo graph facts.",
+  "inputs": {
+    "repoRoot": "string",
+    "worktree": "object",
+    "diff": "string",
+    "hookEvidence": "array",
+    "graphFacts": "array"
+  },
+  "outputs": {
+    "fingerprint": {
+      "filesTouched": "array",
+      "contractDeltas": "array",
+      "patchSignatures": "array",
+      "surfaces": "array",
+      "semanticSummary": "string"
+    }
+  },
+  "nodes": [
+    {
+      "id": "parse-diff",
+      "type": "diff.parse",
+      "with": {
+        "includeHunks": true,
+        "includeAnchors": true
+      }
+    },
+    {
+      "id": "extract-contract-deltas",
+      "type": "code.contract_delta",
+      "with": {
+        "fields": ["types", "schemas", "apiJson", "componentProps"]
+      }
+    },
+    {
+      "id": "join-graph-facts",
+      "type": "graph.lookup",
+      "with": {
+        "includeImports": true,
+        "includeRoutes": true,
+        "includeDependents": true
+      }
+    },
+    {
+      "id": "emit-fingerprint",
+      "type": "json.merge",
+      "from": ["parse-diff", "extract-contract-deltas", "join-graph-facts"]
+    }
+  ]
+}

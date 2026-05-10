@@ -1,10 +1,12 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
+import { RocketRideClient } from "rocketride";
 import { findGitRoot } from "@rebase/coordinator";
 
 const DEFAULT_COORDINATOR_PORT = 3747;
 const DEFAULT_DASHBOARD_PORT = 3748;
+const DEFAULT_ROCKETRIDE_URI = "http://127.0.0.1:5565";
 const REBASE_AGENTS_BLOCK = [
   "<!-- BEGIN REBASE -->",
   "## Rebase coordination",
@@ -19,8 +21,10 @@ const REBASE_AGENTS_BLOCK = [
   "- call `rebase_checkpoint` after meaningful edit batches",
   "- call `rebase_checkpoint` before committing",
   "- report Rebase notifications to the user",
+  "- treat Rebase `workOrders` as the delegated task source of truth for this session",
   "- pause only on blocking Rebase risk until the user gives direction",
   "- if `rebase_wait_for_direction` times out with `keepWaiting: true`, call it again instead of ending the session cold",
+  "- if `rebase_wait_for_direction` returns `workOrders`, acknowledge the assigned role in the chat and follow that work order before continuing",
   "- when Rebase returns `directions`, present the role and plan to the user, call `rebase_acknowledge_intervention`, then continue from that direction",
   "- if the user chooses split ownership in this chat, call `rebase_record_decision`; this session becomes the owner unless the user names a different owner",
   "- do not add external context providers without an ADR and explicit Krish approval",
@@ -54,6 +58,7 @@ export interface RebaseRuntime {
   coordinatorUrl: string;
   dashboardUrl: string;
   mcpUrl: string;
+  rocketRideUri: string;
 }
 
 export async function prepareRuntime(
@@ -80,7 +85,11 @@ export async function prepareRuntime(
     dashboardPort,
     coordinatorUrl: `http://127.0.0.1:${coordinatorPort}`,
     dashboardUrl: `http://127.0.0.1:${dashboardPort}`,
-    mcpUrl: `http://127.0.0.1:${coordinatorPort}/mcp`
+    mcpUrl: `http://127.0.0.1:${coordinatorPort}/mcp`,
+    rocketRideUri:
+      existing?.rocketRideUri ??
+      process.env.ROCKETRIDE_URI ??
+      DEFAULT_ROCKETRIDE_URI
   };
 
   await writeFile(runtimePath, `${JSON.stringify(runtime, null, 2)}\n`);
@@ -119,8 +128,126 @@ export async function readRuntimeState(cwd: string): Promise<RebaseRuntime | nul
     coordinatorUrl:
       existing.coordinatorUrl ?? `http://127.0.0.1:${coordinatorPort}`,
     dashboardUrl: existing.dashboardUrl ?? `http://127.0.0.1:${dashboardPort}`,
-    mcpUrl: existing.mcpUrl ?? `http://127.0.0.1:${coordinatorPort}/mcp`
+    mcpUrl: existing.mcpUrl ?? `http://127.0.0.1:${coordinatorPort}/mcp`,
+    rocketRideUri:
+      existing.rocketRideUri ??
+      process.env.ROCKETRIDE_URI ??
+      DEFAULT_ROCKETRIDE_URI
   };
+}
+
+export interface RocketRideRuntimeCheckInput {
+  rocketRideUri?: string | undefined;
+  apiKey?: string | undefined;
+  fetchImpl?: FetchLike | undefined;
+  clientFactory?: RocketRideClientFactory | undefined;
+}
+
+export interface RocketRideRuntimeCheck {
+  ok: boolean;
+  uri: string;
+  message: string;
+  status?: number | undefined;
+}
+
+type FetchLike = (
+  input: string,
+  init?: RequestInit
+) => Promise<Pick<Response, "ok" | "status" | "statusText">>;
+type RocketRideClientLike = {
+  connect(options?: { uri?: string; auth?: string; timeout?: number }): Promise<void>;
+  ping(token?: string): Promise<void>;
+  disconnect(): Promise<void>;
+};
+type RocketRideClientFactory = (
+  uri: string,
+  apiKey: string
+) => RocketRideClientLike;
+
+export async function checkRocketRideRuntime(
+  input: RocketRideRuntimeCheckInput = {}
+): Promise<RocketRideRuntimeCheck> {
+  const uri = normalizeRocketRideUri(
+    input.rocketRideUri ?? process.env.ROCKETRIDE_URI ?? DEFAULT_ROCKETRIDE_URI
+  );
+  const apiKey = input.apiKey ?? process.env.ROCKETRIDE_APIKEY;
+  let sdkCheck: RocketRideRuntimeCheck | null = null;
+  if (apiKey) {
+    sdkCheck = await checkRocketRideWithSdk({
+      uri,
+      apiKey,
+      clientFactory: input.clientFactory
+    });
+    if (sdkCheck.ok) return sdkCheck;
+  }
+
+  const fetchImpl = input.fetchImpl ?? fetch;
+  try {
+    const response = await fetchImpl(`${uri}/health`, { method: "GET" });
+    if (response.ok) {
+      return {
+        ok: true,
+        uri,
+        message: `RocketRide is online at ${uri}.`,
+        status: response.status
+      };
+    }
+    return {
+      ok: false,
+      uri,
+      message: `RocketRide preflight failed at ${uri}/health (${response.status} ${response.statusText}).`,
+      status: response.status
+    };
+  } catch (_error) {
+    if (sdkCheck) return sdkCheck;
+    return {
+      ok: false,
+      uri,
+      message: `RocketRide is offline at ${uri}. Start RocketRide locally or set ROCKETRIDE_URI.`
+    };
+  }
+}
+
+async function checkRocketRideWithSdk(input: {
+  uri: string;
+  apiKey: string;
+  clientFactory?: RocketRideClientFactory | undefined;
+}): Promise<RocketRideRuntimeCheck> {
+  const client =
+    input.clientFactory?.(input.uri, input.apiKey) ??
+    new RocketRideClient({
+      uri: input.uri,
+      auth: input.apiKey,
+      requestTimeout: 1500,
+      module: "rebase-cli"
+    });
+  try {
+    await client.connect({
+      uri: input.uri,
+      auth: input.apiKey,
+      timeout: 1500
+    });
+    await client.ping();
+    return {
+      ok: true,
+      uri: input.uri,
+      message: `RocketRide SDK ping succeeded at ${input.uri}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      uri: input.uri,
+      message: `RocketRide SDK ping failed at ${input.uri}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    };
+  } finally {
+    await client.disconnect().catch(() => undefined);
+  }
+}
+
+function normalizeRocketRideUri(uri: string): string {
+  return uri.replace(/\/+$/, "") || DEFAULT_ROCKETRIDE_URI;
 }
 
 async function readRuntime(runtimePath: string): Promise<Partial<RebaseRuntime> | null> {

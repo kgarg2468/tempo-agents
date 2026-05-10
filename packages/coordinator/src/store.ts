@@ -3,6 +3,7 @@ import type {
   AgentSession,
   Advisory,
   CloudEscalationPacket,
+  CoordinationEpisode,
   ConflictDecision,
   ConflictStatus,
   ContractPublication,
@@ -15,12 +16,14 @@ import type {
   RebaseGraphEdge,
   RebaseGraphNode,
   RebaseRepo,
-  RebaseWorktree
+  RebaseWorktree,
+  WorkOrder
 } from "@rebase/shared";
 import {
   agentSessionSchema,
   advisorySchema,
   cloudEscalationPacketSchema,
+  coordinationEpisodeSchema,
   conflictDecisionSchema,
   conflictSchema,
   contractPublicationSchema,
@@ -32,6 +35,7 @@ import {
   hookEventSchema,
   interventionSchema,
   repoSchema,
+  workOrderSchema,
   worktreeSchema
 } from "@rebase/shared";
 
@@ -63,6 +67,13 @@ export interface RebaseStore {
   upsertConflict(conflict: RebaseConflict): void;
   listConflicts(repoId: string): RebaseConflict[];
   updateConflictStatus(id: string, status: ConflictStatus, updatedAt: number): void;
+  upsertCoordinationEpisode(episode: CoordinationEpisode): void;
+  listCoordinationEpisodes(repoId: string): CoordinationEpisode[];
+  upsertWorkOrder(workOrder: WorkOrder): void;
+  listWorkOrders(repoId: string): WorkOrder[];
+  listQueuedWorkOrders(repoId: string, agentSessionId: string): WorkOrder[];
+  markWorkOrderFetched(id: string, fetchedAt: number): void;
+  markWorkOrderAcknowledged(id: string, acknowledgedAt: number): void;
   upsertConflictDecision(decision: ConflictDecision): void;
   getActiveConflictDecision(conflictId: string): ConflictDecision | null;
   listConflictDecisions(repoId: string): ConflictDecision[];
@@ -543,6 +554,136 @@ class BetterSqliteRebaseStore implements RebaseStore {
       .run(status, updatedAt, id);
   }
 
+  upsertCoordinationEpisode(episode: CoordinationEpisode): void {
+    const parsed = coordinationEpisodeSchema.parse(episode);
+    this.db
+      .prepare(
+        `
+        insert into coordination_episodes (
+          id, repo_id, surface, status, risk, confidence,
+          affected_worktree_ids_json, affected_agent_session_ids_json,
+          conflict_ids_json, owner_agent_session_id, merge_contract_json,
+          rocket_ride_run_ids_json, created_at, updated_at
+        )
+        values (
+          @id, @repoId, @surface, @status, @risk, @confidence,
+          @affectedWorktreeIdsJson, @affectedAgentSessionIdsJson,
+          @conflictIdsJson, @ownerAgentSessionId, @mergeContractJson,
+          @rocketRideRunIdsJson, @createdAt, @updatedAt
+        )
+        on conflict(id) do update set
+          surface = excluded.surface,
+          status = excluded.status,
+          risk = excluded.risk,
+          confidence = excluded.confidence,
+          affected_worktree_ids_json = excluded.affected_worktree_ids_json,
+          affected_agent_session_ids_json = excluded.affected_agent_session_ids_json,
+          conflict_ids_json = excluded.conflict_ids_json,
+          owner_agent_session_id = excluded.owner_agent_session_id,
+          merge_contract_json = excluded.merge_contract_json,
+          rocket_ride_run_ids_json = excluded.rocket_ride_run_ids_json,
+          updated_at = excluded.updated_at
+      `
+      )
+      .run({
+        ...parsed,
+        affectedWorktreeIdsJson: JSON.stringify(parsed.affectedWorktreeIds),
+        affectedAgentSessionIdsJson: JSON.stringify(parsed.affectedAgentSessionIds),
+        conflictIdsJson: JSON.stringify(parsed.conflictIds),
+        ownerAgentSessionId: parsed.ownerAgentSessionId ?? null,
+        mergeContractJson: parsed.mergeContract
+          ? JSON.stringify(parsed.mergeContract)
+          : null,
+        rocketRideRunIdsJson: JSON.stringify(parsed.rocketRideRunIds)
+      });
+  }
+
+  listCoordinationEpisodes(repoId: string): CoordinationEpisode[] {
+    const rows = this.db
+      .prepare(
+        "select * from coordination_episodes where repo_id = ? order by updated_at desc"
+      )
+      .all(repoId) as CoordinationEpisodeRow[];
+    return rows.map((row) =>
+      coordinationEpisodeSchema.parse(coordinationEpisodeFromRow(row))
+    );
+  }
+
+  upsertWorkOrder(workOrder: WorkOrder): void {
+    const parsed = workOrderSchema.parse(workOrder);
+    this.db
+      .prepare(
+        `
+        insert into work_orders (
+          id, repo_id, episode_id, agent_session_id, role, status, revision,
+          title, summary, required_contract, allowed_files_json,
+          blocked_files_json, shared_files_json, next_checkpoint,
+          created_at, updated_at, delivered_at, acknowledged_at
+        )
+        values (
+          @id, @repoId, @episodeId, @agentSessionId, @role, @status, @revision,
+          @title, @summary, @requiredContract, @allowedFilesJson,
+          @blockedFilesJson, @sharedFilesJson, @nextCheckpoint,
+          @createdAt, @updatedAt, @deliveredAt, @acknowledgedAt
+        )
+        on conflict(id) do update set
+          status = case
+            when work_orders.status in ('fetched', 'acknowledged', 'completed')
+            then work_orders.status
+            else excluded.status
+          end,
+          role = excluded.role,
+          title = excluded.title,
+          summary = excluded.summary,
+          required_contract = excluded.required_contract,
+          allowed_files_json = excluded.allowed_files_json,
+          blocked_files_json = excluded.blocked_files_json,
+          shared_files_json = excluded.shared_files_json,
+          next_checkpoint = excluded.next_checkpoint,
+          updated_at = excluded.updated_at
+      `
+      )
+      .run({
+        ...parsed,
+        requiredContract: parsed.requiredContract ?? null,
+        allowedFilesJson: JSON.stringify(parsed.allowedFiles),
+        blockedFilesJson: JSON.stringify(parsed.blockedFiles),
+        sharedFilesJson: JSON.stringify(parsed.sharedFiles),
+        deliveredAt: parsed.deliveredAt ?? null,
+        acknowledgedAt: parsed.acknowledgedAt ?? null
+      });
+  }
+
+  listWorkOrders(repoId: string): WorkOrder[] {
+    const rows = this.db
+      .prepare("select * from work_orders where repo_id = ? order by updated_at desc")
+      .all(repoId) as WorkOrderRow[];
+    return rows.map((row) => workOrderSchema.parse(workOrderFromRow(row)));
+  }
+
+  listQueuedWorkOrders(repoId: string, agentSessionId: string): WorkOrder[] {
+    const rows = this.db
+      .prepare(
+        "select * from work_orders where repo_id = ? and agent_session_id = ? and status = 'queued' order by created_at asc"
+      )
+      .all(repoId, agentSessionId) as WorkOrderRow[];
+    return rows.map((row) => workOrderSchema.parse(workOrderFromRow(row)));
+  }
+
+  markWorkOrderFetched(id: string, fetchedAt: number): void {
+    this.db
+      .prepare("update work_orders set status = 'fetched', delivered_at = ? where id = ?")
+      .run(fetchedAt, id);
+  }
+
+  markWorkOrderAcknowledged(id: string, acknowledgedAt: number): void {
+    this.db
+      .prepare(
+        "update work_orders set status = 'acknowledged', acknowledged_at = ? where id = ?"
+      )
+      .run(acknowledgedAt, id);
+  }
+
   upsertConflictDecision(decision: ConflictDecision): void {
     const parsed = conflictDecisionSchema.parse(decision);
     this.db
@@ -822,6 +963,44 @@ function migrate(db: Database.Database): void {
       debate_json text,
       created_at integer not null,
       updated_at integer not null
+    );
+
+    create table if not exists coordination_episodes (
+      id text primary key,
+      repo_id text not null,
+      surface text not null,
+      status text not null,
+      risk text not null,
+      confidence real not null,
+      affected_worktree_ids_json text not null,
+      affected_agent_session_ids_json text not null,
+      conflict_ids_json text not null,
+      owner_agent_session_id text,
+      merge_contract_json text,
+      rocket_ride_run_ids_json text not null,
+      created_at integer not null,
+      updated_at integer not null
+    );
+
+    create table if not exists work_orders (
+      id text primary key,
+      repo_id text not null,
+      episode_id text not null,
+      agent_session_id text not null,
+      role text not null,
+      status text not null,
+      revision integer not null,
+      title text not null,
+      summary text not null,
+      required_contract text,
+      allowed_files_json text not null,
+      blocked_files_json text not null,
+      shared_files_json text not null,
+      next_checkpoint text not null,
+      created_at integer not null,
+      updated_at integer not null,
+      delivered_at integer,
+      acknowledged_at integer
     );
 
     create table if not exists advisories (
@@ -1268,6 +1447,44 @@ interface ConflictRow {
   updated_at: number;
 }
 
+interface CoordinationEpisodeRow {
+  id: string;
+  repo_id: string;
+  surface: string;
+  status: CoordinationEpisode["status"];
+  risk: CoordinationEpisode["risk"];
+  confidence: number;
+  affected_worktree_ids_json: string;
+  affected_agent_session_ids_json: string;
+  conflict_ids_json: string;
+  owner_agent_session_id: string | null;
+  merge_contract_json: string | null;
+  rocket_ride_run_ids_json: string;
+  created_at: number;
+  updated_at: number;
+}
+
+interface WorkOrderRow {
+  id: string;
+  repo_id: string;
+  episode_id: string;
+  agent_session_id: string;
+  role: WorkOrder["role"];
+  status: WorkOrder["status"];
+  revision: number;
+  title: string;
+  summary: string;
+  required_contract: string | null;
+  allowed_files_json: string;
+  blocked_files_json: string;
+  shared_files_json: string;
+  next_checkpoint: string;
+  created_at: number;
+  updated_at: number;
+  delivered_at: number | null;
+  acknowledged_at: number | null;
+}
+
 function conflictFromRow(row: ConflictRow): RebaseConflict {
   return {
     id: row.id,
@@ -1302,6 +1519,60 @@ function conflictFromRow(row: ConflictRow): RebaseConflict {
       : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function coordinationEpisodeFromRow(
+  row: CoordinationEpisodeRow
+): CoordinationEpisode {
+  return {
+    id: row.id,
+    repoId: row.repo_id,
+    surface: row.surface,
+    status: row.status,
+    risk: row.risk,
+    confidence: row.confidence,
+    affectedWorktreeIds: JSON.parse(row.affected_worktree_ids_json) as string[],
+    affectedAgentSessionIds: JSON.parse(
+      row.affected_agent_session_ids_json
+    ) as string[],
+    conflictIds: JSON.parse(row.conflict_ids_json) as string[],
+    ...(row.owner_agent_session_id
+      ? { ownerAgentSessionId: row.owner_agent_session_id }
+      : {}),
+    ...(row.merge_contract_json
+      ? {
+          mergeContract: JSON.parse(
+            row.merge_contract_json
+          ) as CoordinationEpisode["mergeContract"]
+        }
+      : {}),
+    rocketRideRunIds: JSON.parse(row.rocket_ride_run_ids_json) as string[],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function workOrderFromRow(row: WorkOrderRow): WorkOrder {
+  return {
+    id: row.id,
+    repoId: row.repo_id,
+    episodeId: row.episode_id,
+    agentSessionId: row.agent_session_id,
+    role: row.role,
+    status: row.status,
+    revision: row.revision,
+    title: row.title,
+    summary: row.summary,
+    ...(row.required_contract ? { requiredContract: row.required_contract } : {}),
+    allowedFiles: JSON.parse(row.allowed_files_json) as string[],
+    blockedFiles: JSON.parse(row.blocked_files_json) as string[],
+    sharedFiles: JSON.parse(row.shared_files_json) as string[],
+    nextCheckpoint: row.next_checkpoint,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.delivered_at ? { deliveredAt: row.delivered_at } : {}),
+    ...(row.acknowledged_at ? { acknowledgedAt: row.acknowledged_at } : {})
   };
 }
 

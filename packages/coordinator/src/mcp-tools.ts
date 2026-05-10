@@ -1,15 +1,18 @@
 import type {
   AgentSession,
+  CoordinationEpisode,
   CoordinationRole,
   ConflictDecision,
   ContractPublication,
   Fingerprint,
   Intervention,
   RiskLevel,
-  RebaseConflict
+  RebaseConflict,
+  WorkOrder
 } from "@rebase/shared";
 import { nanoid } from "nanoid";
 import { createHeuristicAdvisory } from "./advisory.js";
+import { buildCoordinationEpisodes } from "./episodes.js";
 import {
   buildAgentSpecificDirective,
   directionFromDirective
@@ -81,6 +84,8 @@ export interface CheckpointResult {
   notices: RebaseConflict[];
   choices: ConflictChoiceBrief[];
   directions: Intervention[];
+  workOrders: WorkOrder[];
+  coordinationEpisodes: CoordinationEpisode[];
   activeDecisions: ActiveDecisionBrief[];
   publications: ContractPublication[];
   keepWaiting: boolean;
@@ -100,6 +105,8 @@ export interface SessionStateResult {
   evidencePacketId?: string | undefined;
   activeRisks: RebaseConflict[];
   queuedDirections: Intervention[];
+  queuedWorkOrders: WorkOrder[];
+  coordinationEpisodes: CoordinationEpisode[];
 }
 
 export interface CollisionRiskInput {
@@ -114,6 +121,7 @@ export interface CollisionRiskResult {
 
 export interface FetchInterventionResult {
   directions: Intervention[];
+  workOrders: WorkOrder[];
 }
 
 export interface RecordDecisionInput {
@@ -139,6 +147,8 @@ export interface WaitForDirectionInput {
 
 export interface WaitForDirectionResult {
   directions: Intervention[];
+  workOrders: WorkOrder[];
+  coordinationEpisodes: CoordinationEpisode[];
   choices: ConflictChoiceBrief[];
   activeDecisions: ActiveDecisionBrief[];
   waitingOn?: WaitingOnBrief | undefined;
@@ -213,6 +223,8 @@ export function createMcpToolHandlers(context: McpToolContext) {
           notices: [],
           choices: [],
           directions: [],
+          workOrders: [],
+          coordinationEpisodes: [],
           activeDecisions: [],
           publications: [],
           keepWaiting: false,
@@ -231,8 +243,19 @@ export function createMcpToolHandlers(context: McpToolContext) {
           })
         : null;
 
+      syncCoordinationState(context.store, context.repoId, checkpointAt);
       ensureQueuedDirectionsForSession(context.store, context.repoId, input.sessionId);
       const directions = deliverQueuedDirections(
+        context.store,
+        context.repoId,
+        input.sessionId
+      );
+      const workOrders = deliverQueuedWorkOrders(
+        context.store,
+        context.repoId,
+        input.sessionId
+      );
+      const coordinationEpisodes = relevantCoordinationEpisodesForSession(
         context.store,
         context.repoId,
         input.sessionId
@@ -280,6 +303,13 @@ export function createMcpToolHandlers(context: McpToolContext) {
           } for this session.`
         );
       }
+      if (workOrders.length > 0) {
+        notifications.push(
+          `Rebase delivered ${workOrders.length} work order${
+            workOrders.length === 1 ? "" : "s"
+          } for this session.`
+        );
+      }
       for (const decision of activeDecisions) {
         notifications.push(
           `Rebase decision active: ${decision.selectedOptionTitle} for conflict ${decision.conflictId}.`
@@ -292,6 +322,8 @@ export function createMcpToolHandlers(context: McpToolContext) {
         notices,
         choices: choicesForConflicts(unresolvedConflicts),
         directions,
+        workOrders,
+        coordinationEpisodes,
         activeDecisions,
         publications: [
           ...(publication ? [publication] : []),
@@ -324,7 +356,18 @@ export function createMcpToolHandlers(context: McpToolContext) {
         queuedDirections: context.store.listQueuedInterventions(
           context.repoId,
           input.sessionId
-        )
+        ),
+        queuedWorkOrders: context.store.listQueuedWorkOrders(
+          context.repoId,
+          input.sessionId
+        ),
+        coordinationEpisodes: session
+          ? relevantCoordinationEpisodesForSession(
+              context.store,
+              context.repoId,
+              input.sessionId
+            )
+          : []
       };
     },
 
@@ -354,9 +397,15 @@ export function createMcpToolHandlers(context: McpToolContext) {
     },
 
     fetchIntervention(input: FetchInterventionInput): FetchInterventionResult {
+      syncCoordinationState(context.store, context.repoId, Date.now());
       ensureQueuedDirectionsForSession(context.store, context.repoId, input.sessionId);
       return {
         directions: deliverQueuedDirections(
+          context.store,
+          context.repoId,
+          input.sessionId
+        ),
+        workOrders: deliverQueuedWorkOrders(
           context.store,
           context.repoId,
           input.sessionId
@@ -423,15 +472,27 @@ export function createMcpToolHandlers(context: McpToolContext) {
       );
       const start = Date.now();
       for (;;) {
+        syncCoordinationState(context.store, context.repoId, Date.now());
         ensureQueuedDirectionsForSession(context.store, context.repoId, input.sessionId);
         const directions = deliverQueuedDirections(
           context.store,
           context.repoId,
           input.sessionId
         );
-        if (directions.length > 0) {
+        const workOrders = deliverQueuedWorkOrders(
+          context.store,
+          context.repoId,
+          input.sessionId
+        );
+        if (directions.length > 0 || workOrders.length > 0) {
           return {
             directions,
+            workOrders,
+            coordinationEpisodes: relevantCoordinationEpisodesForSession(
+              context.store,
+              context.repoId,
+              input.sessionId
+            ),
             choices: choicesForSession(context.store, context.repoId, input.sessionId),
             activeDecisions: activeDecisionBriefsForSession(
               context.store,
@@ -455,6 +516,12 @@ export function createMcpToolHandlers(context: McpToolContext) {
       );
       return {
         directions: [],
+        workOrders: [],
+        coordinationEpisodes: relevantCoordinationEpisodesForSession(
+          context.store,
+          context.repoId,
+          input.sessionId
+        ),
         choices,
         activeDecisions: activeDecisionBriefsForSession(
           context.store,
@@ -494,6 +561,64 @@ function deliverQueuedDirections(
     store.markInterventionFetched(intervention.id, fetchedAt);
   }
   return interventions;
+}
+
+function deliverQueuedWorkOrders(
+  store: RebaseStore,
+  repoId: string,
+  sessionId: string
+): WorkOrder[] {
+  const workOrders = store.listQueuedWorkOrders(repoId, sessionId);
+  const fetchedAt = Date.now();
+  for (const workOrder of workOrders) {
+    store.markWorkOrderFetched(workOrder.id, fetchedAt);
+  }
+  return workOrders;
+}
+
+function syncCoordinationState(
+  store: RebaseStore,
+  repoId: string,
+  createdAt: number
+): void {
+  const result = buildCoordinationEpisodes({
+    repoId,
+    conflicts: store.listConflicts(repoId),
+    agents: store.listAgentSessions(repoId),
+    decisions: store.listConflictDecisions(repoId),
+    publications: store.listContractPublications(repoId),
+    createdAt
+  });
+  const activeEpisodeIds = new Set(result.episodes.map((episode) => episode.id));
+  for (const episode of result.episodes) {
+    store.upsertCoordinationEpisode(episode);
+  }
+  for (const episode of store.listCoordinationEpisodes(repoId)) {
+    if (episode.status !== "resolved" && !activeEpisodeIds.has(episode.id)) {
+      store.upsertCoordinationEpisode({
+        ...episode,
+        status: "resolved",
+        updatedAt: createdAt
+      });
+    }
+  }
+  for (const workOrder of result.workOrders) {
+    store.upsertWorkOrder(workOrder);
+  }
+}
+
+function relevantCoordinationEpisodesForSession(
+  store: RebaseStore,
+  repoId: string,
+  sessionId: string
+): CoordinationEpisode[] {
+  return store
+    .listCoordinationEpisodes(repoId)
+    .filter(
+      (episode) =>
+        episode.status !== "resolved" &&
+        episode.affectedAgentSessionIds.includes(sessionId)
+    );
 }
 
 function ensureQueuedDirectionsForSession(
