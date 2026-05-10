@@ -1,0 +1,35 @@
+{
+  "name": "@rebase/coordinator",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.2.0",
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "@rebase/shared": "workspace:*",
+    "better-sqlite3": "^12.5.0",
+    "chokidar": "^4.0.3",
+    "drizzle-orm": "^0.45.1",
+    "fastify": "^5.6.2",
+    "nanoid": "^5.1.6",
+    "openai": "^6.10.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "tmp": "^0.2.5"
+  }
+}
+

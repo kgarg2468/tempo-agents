@@ -1,0 +1,21 @@
+{
+  "name": "rebase-ai",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "rebase": "./dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b && chmod +x dist/index.js",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rebase/coordinator": "workspace:*",
+    "execa": "^9.6.1",
+    "nanoid": "^5.1.6"
+  }
+}

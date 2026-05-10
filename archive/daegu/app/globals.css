@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0c0b0a;
+  --surface: #131210;
+  --surface-raised: #1c1917;
+  --surface-hover: #211e1b;
+  --border: #2e2824;
+  --border-dim: #1e1c19;
+  --border-raised: #3d3830;
+
+  --accent: #b8291e;
+  --accent-bright: #d4362a;
+  --accent-dim: #5a1009;
+  --accent-glow: rgba(184, 41, 30, 0.22);
+
+  --amber: #c49a14;
+  --amber-dim: #5e4a08;
+  --green: #266b48;
+  --green-dim: #0e3120;
+  --blue: #245278;
+  --blue-dim: #0d2437;
+  --blue-text: #4a8fb0;
+
+  --text: #ece7de;
+  --text-muted: #8a8278;
+  --text-dim: #4a4540;
+
+  --ring: var(--accent);
+
+  /* Emil Kowalski easing curves */
+  --ease-ui: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-smooth: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-ring: var(--ring);
+  --font-display: var(--font-playfair);
+  --font-mono: var(--font-ibm-mono);
+  --font-sans: var(--font-barlow);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-barlow), 'Barlow Condensed', system-ui, sans-serif;
+  letter-spacing: 0.02em;
+}
+
+/* Grain overlay */
+.grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 220px 220px;
+  opacity: 0.032;
+  mix-blend-mode: overlay;
+}
+
+/* Background atmosphere */
+.bg-layer {
+  background:
+    radial-gradient(ellipse 65% 45% at 8% 0%, rgba(184, 41, 30, 0.12), transparent 58%),
+    radial-gradient(ellipse 50% 50% at 92% 0%, rgba(100, 20, 15, 0.07), transparent 55%),
+    radial-gradient(ellipse 85% 55% at 50% 110%, rgba(18, 10, 6, 0.55), transparent 68%),
+    linear-gradient(180deg, #0c0b0a 0%, #080706 100%);
+}
+
+/* Card stagger animation */
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.card-enter {
+  animation: card-in 0.3s var(--ease-ui) forwards;
+  opacity: 0;
+}
+
+/* Terminated stamp */
+@keyframes stamp-appear {
+  0% { opacity: 0; transform: rotate(-14deg) scale(1.5); }
+  60% { opacity: 0.7; transform: rotate(-11deg) scale(0.95); }
+  100% { opacity: 0.55; transform: rotate(-12deg) scale(1); }
+}
+
+.stamp-appear {
+  animation: stamp-appear 0.28s cubic-bezier(0.2, 0, 0.38, 0.9) forwards;
+}
+
+/* Flicker for empty states */
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  47% { opacity: 0.95; }
+  49% { opacity: 0.7; }
+  51% { opacity: 0.95; }
+  80% { opacity: 1; }
+}
+
+.flicker {
+  animation: flicker 4s ease-in-out infinite;
+}
+
+/* Dialog entrance — Emil: animate from scale(0.96) not scale(0) */
+@keyframes dialog-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.dialog-enter {
+  animation: dialog-enter 0.2s var(--ease-ui) forwards;
+  transform-origin: center;
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.overlay-in {
+  animation: overlay-in 0.15s ease forwards;
+}
+
+/* Button press feedback — Emil: scale(0.97) on active */
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Link buttons need the same treatment */
+a:active .btn-inner {
+  transform: scale(0.97);
+}
+
+/* Scrollbar */
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-thumb { background: var(--border); }
+*::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Focus ring */
+*:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
