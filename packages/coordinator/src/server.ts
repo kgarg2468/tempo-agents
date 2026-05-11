@@ -22,6 +22,10 @@ import { repoIdFor, stableId, worktreeIdFor } from "./ids.js";
 import { createMcpToolHandlers } from "./mcp-tools.js";
 import { registerRebaseMcp } from "./mcp.js";
 import { createRebaseWatcher, type RebaseWatcher } from "./watcher.js";
+import {
+  createDisabledRocketRideCoordinator,
+  type RocketRideCoordinator
+} from "./rocketride.js";
 import { createHeuristicAdvisory } from "./advisory.js";
 import {
   buildAgentSpecificDirective,
@@ -35,6 +39,7 @@ export interface CoordinatorOptions {
   dbPath: string;
   token: string;
   startWatcher?: boolean;
+  rocketRide?: RocketRideCoordinator | undefined;
 }
 
 export async function createCoordinatorApp(
@@ -43,6 +48,11 @@ export async function createCoordinatorApp(
   await mkdir(path.dirname(options.dbPath), { recursive: true });
   const repoRoot = await findGitRoot(options.repoRoot);
   const store = createRebaseStore(options.dbPath);
+  const rocketRide =
+    options.rocketRide ??
+    createDisabledRocketRideCoordinator(
+      "RocketRide was not provided to this coordinator instance."
+    );
   const now = Date.now();
   const repoId = repoIdFor(repoRoot);
 
@@ -76,6 +86,7 @@ export async function createCoordinatorApp(
     repoRoot,
     repoId,
     store,
+    rocketRide,
     onEvent: publishEvent
   });
   if (options.startWatcher !== false) {
@@ -92,7 +103,8 @@ export async function createCoordinatorApp(
     repoId,
     token: options.token,
     store,
-    watcher
+    watcher,
+    rocketRide
   });
 
   app.get("/health", async (request) => ({
@@ -101,6 +113,7 @@ export async function createCoordinatorApp(
     repoId,
     db: true,
     openai: Boolean(process.env.OPENAI_API_KEY),
+    rocketRide: rocketRide.status(),
     mcpUrl: localUrl(request, "/mcp")
   }));
 
@@ -177,6 +190,10 @@ export async function createCoordinatorApp(
       )
   }));
 
+  app.get("/api/merge-risks", async () => ({
+    mergeRisks: store.listLatestMergeRiskAssessments(repoId)
+  }));
+
   app.get("/api/decisions", async () => ({
     decisions: store
       .listConflictDecisions(repoId)
@@ -218,6 +235,7 @@ export async function createCoordinatorApp(
       configured: Boolean(process.env.OPENAI_API_KEY),
       model: process.env.OPENAI_MODEL ?? "gpt-5.4-mini"
     },
+    rocketRide: rocketRide.status(),
     codex: {
       mcpUrl: localUrl(request, "/mcp")
     }
@@ -226,9 +244,10 @@ export async function createCoordinatorApp(
   const mcpHandlers = createMcpToolHandlers({
     repoId,
     repoRoot,
-    store
+    store,
+    rocketRide
   });
-  registerRebaseMcp(app, { repoId, repoRoot, store });
+  registerRebaseMcp(app, { repoId, repoRoot, store, rocketRide });
 
   app.post("/api/analyze", { preHandler: tokenAuth }, async () => {
     const result = await watcher.scanOnce();
@@ -716,6 +735,7 @@ declare module "fastify" {
       token: string;
       store: RebaseStore;
       watcher: RebaseWatcher;
+      rocketRide: RocketRideCoordinator;
     };
   }
 }

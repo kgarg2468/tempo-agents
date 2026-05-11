@@ -47,6 +47,85 @@ describe("worktree analyzer", () => {
     expect(result.conflicts[0]?.affectedSurfaces).toContain("Task model");
   });
 
+  it("uses RocketRide fingerprint output as authoritative in required mode", async () => {
+    const repo = await createRepo();
+    const wtA = path.join(path.dirname(repo), `rebase-a-${path.basename(repo)}`);
+    await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
+    await writeFile(
+      path.join(wtA, "src", "db", "schema.ts"),
+      "export interface Task { id: string; label: string }\n"
+    );
+    const rocketRideInputs: Record<string, unknown>[] = [];
+
+    const result = await analyzeWorktreesOnce({
+      repoRoot: repo,
+      repoId: "repo-1",
+      rocketRide: {
+        status: () => ({
+          mode: "required",
+          ok: true,
+          uri: "http://127.0.0.1:5565",
+          pipelineStatus: "validated",
+          authoritative: true,
+          message: "RocketRide test runner"
+        }),
+        async runPipeline(_name, input) {
+          rocketRideInputs.push(input);
+          return {
+            runId: "rr-fingerprint",
+            output: {
+              fingerprint: {
+                ...fingerprintFromInput(input),
+                semanticSummary: "RocketRide authoritative fingerprint",
+                contractChanges: ["RocketRide saw Task.label"]
+              }
+            }
+          };
+        }
+      }
+    });
+
+    expect(result.rocketRideRunIds).toEqual(["rr-fingerprint"]);
+    expect(rocketRideInputs[0]?.createdAt).toEqual(expect.any(Number));
+    expect(result.fingerprints).toHaveLength(1);
+    expect(result.fingerprints[0]?.semanticSummary).toBe(
+      "RocketRide authoritative fingerprint"
+    );
+    expect(result.conflicts).toEqual([]);
+  });
+
+  it("rejects invalid RocketRide fingerprint output in required mode", async () => {
+    const repo = await createRepo();
+    const wtA = path.join(path.dirname(repo), `rebase-a-${path.basename(repo)}`);
+    await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
+    await writeFile(
+      path.join(wtA, "src", "db", "schema.ts"),
+      "export interface Task { id: string; label: string }\n"
+    );
+
+    await expect(
+      analyzeWorktreesOnce({
+        repoRoot: repo,
+        repoId: "repo-1",
+        rocketRide: {
+          status: () => ({
+            mode: "required",
+            ok: true,
+            uri: "http://127.0.0.1:5565",
+            pipelineStatus: "validated",
+            authoritative: true,
+            message: "RocketRide test runner"
+          }),
+          async runPipeline() {
+            return { runId: "rr-invalid", output: { ok: true } };
+          }
+        }
+      })
+    ).rejects.toThrow(
+      "RocketRide rebase-fingerprint output did not match the required schema"
+    );
+  });
+
   it("ignores generated-only Next route type diffs", async () => {
     const repo = await createRepo();
     await writeFile(
@@ -97,3 +176,33 @@ describe("worktree analyzer", () => {
     expect(result.conflicts).toEqual([]);
   });
 });
+
+function fingerprintFromInput(input: Record<string, unknown>) {
+  return {
+    id: `rr-${String(input.worktreeId)}`,
+    repoId: String(input.repoId),
+    worktreeId: String(input.worktreeId),
+    diffHash: String(input.diffHash),
+    createdAt: 1778000000000,
+    filesTouched: ["src/db/schema.ts"],
+    symbols: {
+      added: ["Task.label"],
+      modified: ["Task"],
+      removed: []
+    },
+    surfaces: [
+      {
+        id: "surface-task",
+        label: "Task model",
+        kind: "type",
+        files: ["src/db/schema.ts"],
+        confidence: 0.9,
+        evidence: ["Task type changed"]
+      }
+    ],
+    semanticSummary: "RocketRide fingerprint",
+    contractChanges: ["Task changed"],
+    confidence: 0.9,
+    source: "mixed"
+  };
+}

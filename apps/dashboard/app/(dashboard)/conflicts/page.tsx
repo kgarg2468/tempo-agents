@@ -38,6 +38,13 @@ export default async function ConflictsPage() {
           const publication = snapshot.publications.find(
             (item) => item.conflictId === conflict.id
           );
+          const conflictEpisodes = snapshot.coordinationEpisodes.filter((episode) =>
+            episode.conflictIds.includes(conflict.id)
+          );
+          const conflictEpisodeIds = new Set(conflictEpisodes.map((episode) => episode.id));
+          const mergeRisks = snapshot.mergeRisks.filter((risk) =>
+            conflictEpisodeIds.has(risk.episodeId)
+          );
           return (
             <div className="row-panel" key={conflict.id}>
             <div className="row-title">
@@ -82,6 +89,37 @@ export default async function ConflictsPage() {
                 <span className="status-pill">
                   surfaces {conflict.tokenCostEstimate.inputs.touchedSurfaces}
                 </span>
+              </div>
+            ) : null}
+            {mergeRisks.length > 0 ? (
+              <div className="evidence-grid">
+                {mergeRisks.map((risk) => (
+                  <div className="evidence-card" key={risk.id}>
+                    <span className={`${risk.safe ? "risk-clear" : "risk-high"} small`}>
+                      merge-risk {risk.status} · {risk.risk}
+                    </span>
+                    {risk.predictedConflicts.slice(0, 2).map((item) => (
+                      <p key={item.id}>{item.summary}</p>
+                    ))}
+                    <div className="agent-meta">
+                      {risk.rocketRideRunId ? (
+                        <span className="status-pill">
+                          RocketRide {risk.rocketRideRunId}
+                        </span>
+                      ) : null}
+                      {risk.requiredWorkOrders.slice(0, 2).map((workOrderId) => (
+                        <span className="status-pill" key={workOrderId}>
+                          blocks {workOrderId}
+                        </span>
+                      ))}
+                    </div>
+                    {risk.evidence.slice(0, 2).map((item) => (
+                      <p className="muted small" key={`${risk.id}-${item.label}`}>
+                        {item.label}: {item.detail}
+                      </p>
+                    ))}
+                  </div>
+                ))}
               </div>
             ) : null}
             <div className="agent-meta">

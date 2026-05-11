@@ -17,5 +17,7 @@ export * from "./evidence.js";
 export * from "./privacy.js";
 export * from "./context-provider.js";
 export * from "./graph.js";
+export * from "./rocketride.js";
+export * from "./rocketride-contracts.js";
 export * from "./debate.js";
 export * from "./escalation.js";

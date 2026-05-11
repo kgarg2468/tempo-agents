@@ -124,7 +124,7 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
         sessionId: z.string(),
         publishContract: z
           .object({
-            conflictId: z.string(),
+            conflictId: z.string().optional(),
             surface: z.string(),
             shapeSummary: z.string(),
             files: z.array(z.string()).optional()
@@ -133,6 +133,34 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
       }
     },
     async (input) => textResult(handlers.checkpoint(input))
+  );
+
+  server.registerTool(
+    "rebase_publish_contract",
+    {
+      title: "Publish Rebase Contract",
+      description:
+        "Publish the canonical contract for this session's active coordination episode. Rebase infers the conflict when one active episode matches.",
+      inputSchema: {
+        sessionId: z.string(),
+        conflictId: z.string().optional(),
+        surface: z.string(),
+        shapeSummary: z.string(),
+        files: z.array(z.string()).optional()
+      }
+    },
+    async (input) =>
+      textResult(
+        handlers.checkpoint({
+          sessionId: input.sessionId,
+          publishContract: {
+            ...(input.conflictId ? { conflictId: input.conflictId } : {}),
+            surface: input.surface,
+            shapeSummary: input.shapeSummary,
+            ...(input.files ? { files: input.files } : {})
+          }
+        })
+      )
   );
 
   server.registerTool(

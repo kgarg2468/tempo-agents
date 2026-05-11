@@ -1,5 +1,11 @@
 import { watch, type FSWatcher } from "chokidar";
-import type { RebaseConflict, RebaseEvent, RebaseWorktree } from "@rebase/shared";
+import type {
+  CoordinationEpisode,
+  MergeRiskAssessment,
+  RebaseConflict,
+  RebaseEvent,
+  RebaseWorktree
+} from "@rebase/shared";
 import { createHeuristicAdvisory } from "./advisory.js";
 import { analyzeWorktreesOnce, type AnalyzeWorktreesResult } from "./analyzer.js";
 import {
@@ -19,6 +25,16 @@ import {
 import { withDebate } from "./debate.js";
 import { createCloudEscalationCandidate } from "./escalation.js";
 import { buildCoordinationEpisodes } from "./episodes.js";
+import {
+  parseCollisionRunOutput,
+  parseMergeRiskRunOutput,
+  parseWorkOrderRunOutput
+} from "./rocketride-contracts.js";
+import {
+  isRocketRideRequired,
+  runRocketRidePipeline,
+  type RocketRideCoordinator
+} from "./rocketride.js";
 
 export interface RebaseWatcherOptions {
   repoRoot: string;
@@ -28,6 +44,7 @@ export interface RebaseWatcherOptions {
   pollIntervalMs?: number;
   now?: () => number;
   onEvent?: (event: RebaseEvent) => void;
+  rocketRide?: RocketRideCoordinator | undefined;
 }
 
 export interface RebaseWatcher {
@@ -85,9 +102,10 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     await this.refreshWorktrees();
     const result = await analyzeWorktreesOnce({
       repoRoot: this.options.repoRoot,
-      repoId: this.options.repoId
+      repoId: this.options.repoId,
+      rocketRide: this.options.rocketRide
     });
-    this.persistAnalysis(result);
+    await this.persistAnalysis(result);
     this.recordEvent("analysis.completed", "Rebase analyzed dirty worktrees", {
       fingerprintCount: result.fingerprints.length,
       conflictCount: result.conflicts.length
@@ -194,7 +212,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     this.pending.set(worktreePath, timer);
   }
 
-  private persistAnalysis(result: AnalyzeWorktreesResult): void {
+  private async persistAnalysis(result: AnalyzeWorktreesResult): Promise<void> {
     const existingConflicts = new Map(
       this.options.store
         .listConflicts(this.options.repoId)
@@ -207,46 +225,183 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
       upsertFingerprintGraph(this.options.store, fingerprint);
     }
 
-    for (const conflict of result.conflicts) {
-      const existing = existingConflicts.get(conflict.id);
-      activeConflictIds.add(conflict.id);
-      const persistedConflict: RebaseConflict =
-        existing?.status === "acknowledged"
-          ? { ...conflict, status: "acknowledged", createdAt: existing.createdAt }
-          : conflict;
-      const debatedConflict = withDebate(persistedConflict, result.fingerprints);
-      this.options.store.upsertConflict(debatedConflict);
-      upsertConflictGraph(this.options.store, debatedConflict);
-      if (debatedConflict.risk !== "low") {
-        this.options.store.upsertCloudEscalationPacket(
-          createCloudEscalationCandidate({
-            repoRoot: this.options.repoRoot,
-            conflict: debatedConflict,
-            fingerprints: result.fingerprints,
-            createdAt: this.now()
-          })
-        );
-      }
-      if (
-        !this.options.store
-          .listAdvisories(this.options.repoId)
-          .some((advisory) => advisory.conflictId === debatedConflict.id)
-      ) {
-        this.options.store.upsertAdvisory(
-          createHeuristicAdvisory(debatedConflict, this.now())
-        );
-      }
-      this.recordEvent(
-        existing ? "conflict.updated" : "conflict.opened",
-        debatedConflict.title,
+    if (isRocketRideRequired(this.options.rocketRide)) {
+      const coordinationRocketRideRunIds = [...result.rocketRideRunIds];
+      const collisionRun = await runRocketRidePipeline(
+        this.options.rocketRide,
+        "rebase-collision",
         {
-          conflictId: debatedConflict.id,
-          risk: debatedConflict.risk,
-          affectedSurfaces: debatedConflict.affectedSurfaces
+          fingerprints: result.fingerprints,
+          plans: this.options.store.listAgentSessions(this.options.repoId),
+          graphFacts: [],
+          existingEpisodes: this.options.store.listCoordinationEpisodes(
+            this.options.repoId
+          ),
+          activeDecisions: this.options.store.listConflictDecisions(
+            this.options.repoId
+          )
         }
       );
+      if (!collisionRun) {
+        throw new Error("RocketRide rebase-collision did not return a run");
+      }
+      coordinationRocketRideRunIds.push(collisionRun.runId);
+      const collision = parseCollisionRunOutput(collisionRun.output);
+      this.persistConflicts({
+        conflicts: collision.conflicts,
+        fingerprints: result.fingerprints,
+        existingConflicts,
+        activeConflictIds,
+        useLocalDebate: false
+      });
+      this.resolveInactiveConflicts(existingConflicts, activeConflictIds);
+
+      const workOrderRun = await runRocketRidePipeline(
+        this.options.rocketRide,
+        "rebase-work-order",
+        {
+          conflicts: collision.conflicts,
+          episodes: collision.episodes,
+          agents: this.options.store.listAgentSessions(this.options.repoId),
+          decisions: this.options.store.listConflictDecisions(this.options.repoId),
+          publications: this.options.store.listContractPublications(
+            this.options.repoId
+          ),
+          existingWorkOrders: this.options.store.listWorkOrders(this.options.repoId)
+        }
+      );
+      if (!workOrderRun) {
+        throw new Error("RocketRide rebase-work-order did not return a run");
+      }
+      coordinationRocketRideRunIds.push(workOrderRun.runId);
+      const workOrder = parseWorkOrderRunOutput(workOrderRun.output);
+      const episodesWithRocketRideRuns = workOrder.episodes.map((episode) =>
+        withRocketRideRunIds(episode, coordinationRocketRideRunIds)
+      );
+      const episodesWithMergeRisk = await this.applyMergeRisk({
+        episodes: episodesWithRocketRideRuns,
+        workOrders: workOrder.workOrders,
+        conflicts: collision.conflicts,
+        fingerprints: result.fingerprints,
+        rocketRideRunIds: coordinationRocketRideRunIds,
+        createdAt: this.now()
+      });
+      this.persistCoordination({
+        episodes: episodesWithMergeRisk,
+        workOrders: workOrder.workOrders
+      });
+      return;
     }
 
+    for (const conflict of result.conflicts) {
+      this.persistConflict({
+        conflict,
+        fingerprints: result.fingerprints,
+        existingConflicts,
+        activeConflictIds,
+        useLocalDebate: true
+      });
+    }
+
+    this.resolveInactiveConflicts(existingConflicts, activeConflictIds);
+
+    const coordinationRocketRideRunIds = [...result.rocketRideRunIds];
+    const collisionRun = await runRocketRidePipeline(
+      this.options.rocketRide,
+      "rebase-collision",
+      {
+        fingerprints: result.fingerprints,
+        plans: this.options.store.listAgentSessions(this.options.repoId),
+        graphFacts: [],
+        activeDecisions: this.options.store.listConflictDecisions(this.options.repoId)
+      }
+    );
+    if (collisionRun) coordinationRocketRideRunIds.push(collisionRun.runId);
+    const workOrderRun = await runRocketRidePipeline(
+      this.options.rocketRide,
+      "rebase-work-order",
+      {
+        conflicts: this.options.store.listConflicts(this.options.repoId),
+        agents: this.options.store.listAgentSessions(this.options.repoId),
+        publications: this.options.store.listContractPublications(this.options.repoId)
+      }
+    );
+    if (workOrderRun) coordinationRocketRideRunIds.push(workOrderRun.runId);
+
+    const coordination = buildCoordinationEpisodes({
+      repoId: this.options.repoId,
+      conflicts: this.options.store.listConflicts(this.options.repoId),
+      agents: this.options.store.listAgentSessions(this.options.repoId),
+      decisions: this.options.store.listConflictDecisions(this.options.repoId),
+      publications: this.options.store.listContractPublications(this.options.repoId),
+      existingEpisodes: this.options.store.listCoordinationEpisodes(this.options.repoId),
+      existingWorkOrders: this.options.store.listWorkOrders(this.options.repoId),
+      rocketRideRunIds: coordinationRocketRideRunIds,
+      createdAt: this.now()
+    });
+    this.persistCoordination(coordination);
+  }
+
+  private persistConflicts(input: {
+    conflicts: RebaseConflict[];
+    fingerprints: AnalyzeWorktreesResult["fingerprints"];
+    existingConflicts: Map<string, RebaseConflict>;
+    activeConflictIds: Set<string>;
+    useLocalDebate: boolean;
+  }): void {
+    for (const conflict of input.conflicts) {
+      this.persistConflict({ ...input, conflict });
+    }
+  }
+
+  private persistConflict(input: {
+    conflict: RebaseConflict;
+    fingerprints: AnalyzeWorktreesResult["fingerprints"];
+    existingConflicts: Map<string, RebaseConflict>;
+    activeConflictIds: Set<string>;
+    useLocalDebate: boolean;
+  }): void {
+    const existing = input.existingConflicts.get(input.conflict.id);
+    input.activeConflictIds.add(input.conflict.id);
+    const persistedConflict: RebaseConflict =
+      existing?.status === "acknowledged"
+        ? { ...input.conflict, status: "acknowledged", createdAt: existing.createdAt }
+        : input.conflict;
+    const finalConflict = input.useLocalDebate
+      ? withDebate(persistedConflict, input.fingerprints)
+      : persistedConflict;
+    this.options.store.upsertConflict(finalConflict);
+    upsertConflictGraph(this.options.store, finalConflict);
+    if (finalConflict.risk !== "low") {
+      this.options.store.upsertCloudEscalationPacket(
+        createCloudEscalationCandidate({
+          repoRoot: this.options.repoRoot,
+          conflict: finalConflict,
+          fingerprints: input.fingerprints,
+          createdAt: this.now()
+        })
+      );
+    }
+    if (
+      !this.options.store
+        .listAdvisories(this.options.repoId)
+        .some((advisory) => advisory.conflictId === finalConflict.id)
+    ) {
+      this.options.store.upsertAdvisory(
+        createHeuristicAdvisory(finalConflict, this.now())
+      );
+    }
+    this.recordEvent(existing ? "conflict.updated" : "conflict.opened", finalConflict.title, {
+      conflictId: finalConflict.id,
+      risk: finalConflict.risk,
+      affectedSurfaces: finalConflict.affectedSurfaces
+    });
+  }
+
+  private resolveInactiveConflicts(
+    existingConflicts: Map<string, RebaseConflict>,
+    activeConflictIds: Set<string>
+  ): void {
     for (const conflict of existingConflicts.values()) {
       if (
         (conflict.status === "open" || conflict.status === "acknowledged") &&
@@ -263,17 +418,14 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
         });
       }
     }
+  }
 
-    const coordination = buildCoordinationEpisodes({
-      repoId: this.options.repoId,
-      conflicts: this.options.store.listConflicts(this.options.repoId),
-      agents: this.options.store.listAgentSessions(this.options.repoId),
-      decisions: this.options.store.listConflictDecisions(this.options.repoId),
-      publications: this.options.store.listContractPublications(this.options.repoId),
-      createdAt: this.now()
-    });
-    const activeEpisodeIds = new Set(coordination.episodes.map((episode) => episode.id));
-    for (const episode of coordination.episodes) {
+  private persistCoordination(input: {
+    episodes: CoordinationEpisode[];
+    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
+  }): void {
+    const activeEpisodeIds = new Set(input.episodes.map((episode) => episode.id));
+    for (const episode of input.episodes) {
       this.options.store.upsertCoordinationEpisode(episode);
     }
     for (const episode of this.options.store.listCoordinationEpisodes(
@@ -287,9 +439,95 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
         });
       }
     }
-    for (const workOrder of coordination.workOrders) {
+    for (const workOrder of input.workOrders) {
       this.options.store.upsertWorkOrder(workOrder);
     }
+    for (const episode of input.episodes) {
+      if (episode.status !== "coordinated" && episode.status !== "safe") continue;
+      for (const conflictId of episode.conflictIds) {
+        this.options.store.updateConflictStatus(conflictId, "resolved", this.now());
+      }
+    }
+  }
+
+  private async applyMergeRisk(input: {
+    episodes: CoordinationEpisode[];
+    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
+    conflicts: RebaseConflict[];
+    fingerprints: AnalyzeWorktreesResult["fingerprints"];
+    rocketRideRunIds: string[];
+    createdAt: number;
+  }): Promise<CoordinationEpisode[]> {
+    if (!isRocketRideRequired(this.options.rocketRide)) return input.episodes;
+    const episodes: CoordinationEpisode[] = [];
+    for (const episode of input.episodes) {
+      const mergeRiskRun = await runRocketRidePipeline(
+        this.options.rocketRide,
+        "rebase-merge-risk",
+        {
+          repoId: this.options.repoId,
+          episode,
+          conflicts: input.conflicts.filter((conflict) =>
+            episode.conflictIds.includes(conflict.id)
+          ),
+          fingerprints: input.fingerprints.filter((fingerprint) =>
+            episode.affectedWorktreeIds.includes(fingerprint.worktreeId)
+          ),
+          workOrders: input.workOrders.filter(
+            (workOrder) => workOrder.episodeId === episode.id
+          ),
+          agents: this.options.store.listAgentSessions(this.options.repoId),
+          publications: this.options.store.listContractPublications(
+            this.options.repoId
+          ),
+          existingMergeRisks: this.options.store.listLatestMergeRiskAssessments(
+            this.options.repoId
+          ),
+          diffs: await this.mergeRiskDiffs(episode, input.fingerprints),
+          createdAt: input.createdAt
+        }
+      );
+      if (!mergeRiskRun) {
+        throw new Error("RocketRide rebase-merge-risk did not return a run");
+      }
+      input.rocketRideRunIds.push(mergeRiskRun.runId);
+      const parsed = parseMergeRiskRunOutput(mergeRiskRun.output).mergeRisk;
+      const assessment: MergeRiskAssessment = {
+        ...parsed,
+        rocketRideRunId: parsed.rocketRideRunId ?? mergeRiskRun.runId
+      };
+      this.options.store.upsertMergeRiskAssessment(assessment);
+      episodes.push(withMergeRisk(episode, assessment, mergeRiskRun.runId));
+    }
+    return episodes;
+  }
+
+  private async mergeRiskDiffs(
+    episode: CoordinationEpisode,
+    fingerprints: AnalyzeWorktreesResult["fingerprints"]
+  ): Promise<Array<{ worktreeId: string; diffHash: string; diff: string }>> {
+    const worktrees = new Map(
+      this.options.store
+        .listWorktrees(this.options.repoId)
+        .map((worktree) => [worktree.id, worktree])
+    );
+    const fingerprintsByWorktree = new Map(
+      fingerprints.map((fingerprint) => [fingerprint.worktreeId, fingerprint])
+    );
+    const diffs: Array<{ worktreeId: string; diffHash: string; diff: string }> = [];
+    for (const worktreeId of episode.affectedWorktreeIds) {
+      const worktree = worktrees.get(worktreeId);
+      if (!worktree || worktree.status === "missing") continue;
+      const diff = normalizeDiff(
+        this.pathFilter.filterDiff(await getWorktreeDiff(worktree.path))
+      );
+      diffs.push({
+        worktreeId,
+        diffHash: fingerprintsByWorktree.get(worktreeId)?.diffHash ?? stableId(diff),
+        diff
+      });
+    }
+    return diffs;
   }
 
   private recordEvent(
@@ -314,4 +552,53 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     this.options.store.addEvent(event);
     this.options.onEvent?.(event);
   }
+}
+
+function withRocketRideRunIds(
+  episode: CoordinationEpisode,
+  rocketRideRunIds: string[]
+): CoordinationEpisode {
+  return {
+    ...episode,
+    rocketRideRunIds: uniqueInOrder([
+      ...episode.rocketRideRunIds,
+      ...rocketRideRunIds
+    ])
+  };
+}
+
+function withMergeRisk(
+  episode: CoordinationEpisode,
+  assessment: MergeRiskAssessment,
+  rocketRideRunId: string
+): CoordinationEpisode {
+  const rocketRideRunIds = uniqueInOrder([
+    ...episode.rocketRideRunIds,
+    rocketRideRunId
+  ]);
+  if (!assessment.safe && assessment.risk === "high") {
+    return {
+      ...episode,
+      status: "blocked",
+      risk: "high",
+      rocketRideRunIds
+    };
+  }
+  if (assessment.safe && episode.status === "coordinated") {
+    return {
+      ...episode,
+      status: "safe",
+      risk: assessment.risk,
+      rocketRideRunIds
+    };
+  }
+  return {
+    ...episode,
+    risk: assessment.risk === "medium" ? "medium" : episode.risk,
+    rocketRideRunIds
+  };
+}
+
+function uniqueInOrder(values: string[]): string[] {
+  return [...new Set(values)];
 }

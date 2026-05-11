@@ -352,6 +352,7 @@ export const coordinationEpisodeSchema = z.object({
   status: z.enum([
     "open",
     "coordinating",
+    "coordinated",
     "verifying",
     "safe",
     "blocked",
@@ -369,6 +370,54 @@ export const coordinationEpisodeSchema = z.object({
   updatedAt: z.number()
 });
 export type CoordinationEpisode = z.infer<typeof coordinationEpisodeSchema>;
+
+export const mergeRiskStatusSchema = z.enum([
+  "safe",
+  "warning",
+  "blocked",
+  "unknown"
+]);
+export type MergeRiskStatus = z.infer<typeof mergeRiskStatusSchema>;
+
+export const predictedMergeConflictSchema = z.object({
+  id: z.string().min(1),
+  risk: riskLevelSchema,
+  reasonCode: z.string().min(1),
+  summary: z.string().min(1).max(1000),
+  files: z.array(z.string().min(1)).default([]),
+  symbols: z.array(z.string().min(1)).default([]),
+  affectedWorktreeIds: z.array(z.string().min(1)).default([]),
+  evidence: z.array(z.string().min(1)).default([]),
+  blocking: z.boolean()
+});
+export type PredictedMergeConflict = z.infer<
+  typeof predictedMergeConflictSchema
+>;
+
+export const mergeRiskEvidenceSchema = z.object({
+  label: z.string().min(1),
+  detail: z.string().min(1).max(1000),
+  files: z.array(z.string().min(1)).default([]),
+  worktreeIds: z.array(z.string().min(1)).default([])
+});
+export type MergeRiskEvidence = z.infer<typeof mergeRiskEvidenceSchema>;
+
+export const mergeRiskAssessmentSchema = z.object({
+  id: z.string().min(1),
+  repoId: z.string().min(1),
+  episodeId: z.string().min(1),
+  status: mergeRiskStatusSchema,
+  risk: riskLevelSchema,
+  safe: z.boolean(),
+  diffHash: z.string().min(1),
+  rocketRideRunId: z.string().min(1).optional(),
+  predictedConflicts: z.array(predictedMergeConflictSchema).default([]),
+  warnings: z.array(z.string().min(1)).default([]),
+  requiredWorkOrders: z.array(z.string().min(1)).default([]),
+  evidence: z.array(mergeRiskEvidenceSchema).default([]),
+  createdAt: z.number()
+});
+export type MergeRiskAssessment = z.infer<typeof mergeRiskAssessmentSchema>;
 
 export const workOrderSchema = z.object({
   id: z.string().min(1),

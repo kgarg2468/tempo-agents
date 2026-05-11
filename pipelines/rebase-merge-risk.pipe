@@ -1,52 +1,49 @@
 {
-  "version": "1",
+  "version": 1,
   "name": "rebase-merge-risk",
-  "description": "Verify active work orders and dirty diffs before Rebase declares a coordination episode merge-safe.",
-  "inputs": {
-    "repoRoot": "string",
-    "episode": "object",
-    "workOrders": "array",
-    "activeDiffs": "array",
-    "verificationCommands": "array"
+  "description": "Required Rebase pipeline. Produces typed predictive { mergeRisk } output without running git merge machinery.",
+  "x-rebase": {
+    "contract": "mergeRiskRunOutput",
+    "intent": "Predict merge incompatibility from diffs, hunks, fingerprints, contracts, and work-order state before Rebase declares an episode merge-safe."
   },
-  "outputs": {
-    "mergeRisk": {
-      "safe": "boolean",
-      "gitConflicts": "array",
-      "failedChecks": "array",
-      "requiredWorkOrders": "array"
-    }
-  },
-  "nodes": [
+  "source": "source_1",
+  "components": [
     {
-      "id": "predict-text-conflicts",
-      "type": "diff.patch_signature_compare",
-      "with": {
-        "compareHunkAnchors": true,
-        "compareTouchedRanges": true
-      }
+      "id": "source_1",
+      "provider": "webhook",
+      "config": {
+        "key": "webhook://*",
+        "mode": "Source",
+        "name": "Rebase Merge Risk Input",
+        "include": [{ "path": "*" }],
+        "parameters": {
+          "endpoint": "/pipe/process",
+          "port": 5565
+        },
+        "sync": false,
+        "type": "webhook"
+      },
+      "ui": {}
     },
     {
-      "id": "simulate-private-merge",
-      "type": "git.sandbox_merge",
-      "with": {
-        "mutateUserBranches": false,
-        "applyDirtyDiffs": true
-      }
+      "id": "rebase_1",
+      "provider": "rebase_coordination",
+      "config": {
+        "operation": "merge-risk"
+      },
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "source_1" }
+      ]
     },
     {
-      "id": "run-checks",
-      "type": "process.run",
-      "with": {
-        "onlyAfterCleanMerge": true
-      }
-    },
-    {
-      "id": "emit-required-work-orders",
-      "type": "policy.repair_work_order",
-      "with": {
-        "blockUntilClean": true
-      }
+      "id": "response_1",
+      "provider": "response",
+      "config": {},
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "rebase_1" }
+      ]
     }
   ]
 }

@@ -1,45 +1,49 @@
 {
-  "version": "1",
+  "version": 1,
   "name": "rebase-work-order",
-  "description": "Create per-agent owner/adapter work orders for every affected Codex session in a coordination episode.",
-  "inputs": {
-    "episode": "object",
-    "agents": "array",
-    "mergeContract": "object",
-    "plans": "array",
-    "activeDiffs": "array"
+  "description": "Required Rebase pipeline. Produces typed { episodes, workOrders } owner/adapter assignments.",
+  "x-rebase": {
+    "contract": "workOrderRunOutput",
+    "intent": "Create per-agent owner/adapter work orders for every affected Codex session in a coordination episode."
   },
-  "outputs": {
-    "workOrders": "array"
-  },
-  "nodes": [
+  "source": "source_1",
+  "components": [
     {
-      "id": "elect-owner",
-      "type": "policy.owner_election",
-      "with": {
-        "preferActiveDecision": true,
-        "fallback": "earliestJoinedAgent"
-      }
+      "id": "source_1",
+      "provider": "webhook",
+      "config": {
+        "key": "webhook://*",
+        "mode": "Source",
+        "name": "Rebase Work Order Input",
+        "include": [{ "path": "*" }],
+        "parameters": {
+          "endpoint": "/pipe/process",
+          "port": 5565
+        },
+        "sync": false,
+        "type": "webhook"
+      },
+      "ui": {}
     },
     {
-      "id": "build-merge-contract",
-      "type": "json.contract",
-      "with": {
-        "includeFields": true,
-        "includeDbColumns": true,
-        "includeApiFields": true,
-        "includeComponentProps": true
-      }
+      "id": "rebase_1",
+      "provider": "rebase_coordination",
+      "config": {
+        "operation": "work-order"
+      },
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "source_1" }
+      ]
     },
     {
-      "id": "assign-work-orders",
-      "type": "policy.work_order",
-      "with": {
-        "roles": ["contract_owner", "adapter"],
-        "includeAllowedFiles": true,
-        "includeBlockedFiles": true,
-        "includeNextCheckpoint": true
-      }
+      "id": "response_1",
+      "provider": "response",
+      "config": {},
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "rebase_1" }
+      ]
     }
   ]
 }

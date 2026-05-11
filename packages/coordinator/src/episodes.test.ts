@@ -1,6 +1,7 @@
 import type { AgentSession, RebaseConflict } from "@rebase/shared";
 import { describe, expect, it } from "vitest";
 import { buildCoordinationEpisodes } from "./episodes.js";
+import { stableId } from "./ids.js";
 
 const now = 1778000000000;
 
@@ -113,6 +114,151 @@ describe("coordination episodes", () => {
       plan.workOrders.find((order) => order.agentSessionId === "agent-c")?.requiredContract
     ).toContain("Task keeps title:string");
   });
+
+  it("keeps an existing episode owner stable and records RocketRide run ids", () => {
+    const agents = [
+      makeAgent("agent-a", "wt-a", 1),
+      makeAgent("agent-b", "wt-b", 2),
+      makeAgent("agent-c", "wt-c", 3)
+    ];
+
+    const plan = buildCoordinationEpisodes({
+      repoId: "repo-1",
+      conflicts: [
+        {
+          ...makeConflict("conflict-ab", ["wt-a", "wt-b"]),
+          classification: {
+            kind: "blocking_conflict",
+            rationale: "Pair AB prefers A.",
+            recommendedOwnerWorktreeId: "wt-a",
+            source: "openai",
+            confidence: 0.95
+          }
+        },
+        {
+          ...makeConflict("conflict-bc", ["wt-b", "wt-c"]),
+          classification: {
+            kind: "blocking_conflict",
+            rationale: "Pair BC prefers C.",
+            recommendedOwnerWorktreeId: "wt-c",
+            source: "openai",
+            confidence: 0.95
+          }
+        }
+      ],
+      agents,
+      decisions: [],
+      publications: [],
+      existingEpisodes: [
+        {
+          id: "existing-episode",
+          repoId: "repo-1",
+          surface: "Task contract",
+          status: "coordinating",
+          risk: "high",
+          confidence: 0.9,
+          affectedWorktreeIds: ["wt-a", "wt-b", "wt-c"],
+          affectedAgentSessionIds: ["agent-a", "agent-b", "agent-c"],
+          conflictIds: ["conflict-ab"],
+          ownerAgentSessionId: "agent-b",
+          rocketRideRunIds: ["rr-old"],
+          createdAt: now - 100,
+          updatedAt: now - 50
+        }
+      ],
+      rocketRideRunIds: ["rr-new"],
+      createdAt: now
+    });
+
+    expect(plan.episodes).toHaveLength(1);
+    expect(plan.episodes[0]?.ownerAgentSessionId).toBe("agent-b");
+    expect(plan.episodes[0]?.rocketRideRunIds).toEqual(["rr-old", "rr-new"]);
+  });
+
+  it("marks an episode coordinated once every current work order is completed", () => {
+    const agents = [
+      makeAgent("agent-a", "wt-a", 1),
+      makeAgent("agent-b", "wt-b", 2)
+    ];
+    const conflict = makeConflict("conflict-ab", ["wt-a", "wt-b"]);
+    const plan = buildCoordinationEpisodes({
+      repoId: "repo-1",
+      conflicts: [conflict],
+      agents,
+      decisions: [
+        {
+          id: "decision-1",
+          repoId: "repo-1",
+          conflictId: "conflict-ab",
+          selectedOptionId: "split-ownership",
+          selectedOptionTitle: "Split ownership",
+          selectedOptionDirection: "Agent A owns Task contract.",
+          ownerAgentSessionId: "agent-a",
+          createdBy: "agent",
+          status: "active",
+          createdAt: now,
+          updatedAt: now
+        }
+      ],
+      publications: [
+        {
+          id: "publication-1",
+          repoId: "repo-1",
+          conflictId: "conflict-ab",
+          ownerAgentSessionId: "agent-a",
+          surface: "Task contract",
+          shapeSummary:
+            "Task includes title, label, project, subtitle, reminderAt, archived, and batchId.",
+          files: ["src/shared/task.ts", "src/db/schema.ts"],
+          createdAt: now
+        }
+      ],
+      existingWorkOrders: [
+        {
+          id: "work-order-a",
+          repoId: "repo-1",
+          episodeId: stableEpisodeId("wt-a", "wt-b"),
+          agentSessionId: "agent-a",
+          role: "contract_owner",
+          status: "completed",
+          revision: 2,
+          title: "Own Task contract",
+          summary: "Agent A owns Task contract.",
+          requiredContract: "Task includes title, label, project, subtitle, reminderAt, archived, and batchId.",
+          allowedFiles: ["src/shared/task.ts"],
+          blockedFiles: [],
+          sharedFiles: ["src/shared/task.ts"],
+          nextCheckpoint: "Done.",
+          createdAt: now,
+          updatedAt: now
+        },
+        {
+          id: "work-order-b",
+          repoId: "repo-1",
+          episodeId: stableEpisodeId("wt-a", "wt-b"),
+          agentSessionId: "agent-b",
+          role: "adapter",
+          status: "completed",
+          revision: 2,
+          title: "Adapt to Task contract",
+          summary: "Agent B adapts to Task contract.",
+          requiredContract: "Task includes title, label, project, subtitle, reminderAt, archived, and batchId.",
+          allowedFiles: ["src/shared/task.ts"],
+          blockedFiles: [],
+          sharedFiles: ["src/shared/task.ts"],
+          nextCheckpoint: "Done.",
+          createdAt: now,
+          updatedAt: now
+        }
+      ],
+      createdAt: now
+    });
+
+    expect(plan.episodes[0]).toMatchObject({
+      status: "coordinated",
+      risk: "medium"
+    });
+  });
 });
 
 function makeAgent(
@@ -131,6 +277,15 @@ function makeAgent(
     lastCheckpointAt: now,
     joinedAt: now + joinedOffset
   };
+}
+
+function stableEpisodeId(...worktreeIds: string[]): string {
+  return stableId(
+    "coordination-episode",
+    "repo-1",
+    "Task contract",
+    [...worktreeIds].sort().join("|")
+  );
 }
 
 function makeConflict(id: string, worktreeIds: string[]): RebaseConflict {

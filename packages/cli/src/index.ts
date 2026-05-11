@@ -14,6 +14,8 @@ import {
   readRuntimeState,
   type RebaseRuntime
 } from "./runtime.js";
+import { syncRebaseRocketRideNode } from "./rocketride-node-sync.js";
+import { createRocketRideRunner } from "./rocketride-runner.js";
 
 async function main() {
   const rawArgs = process.argv.slice(2);
@@ -27,10 +29,23 @@ async function main() {
     await runStatus();
     return;
   }
+  if (command === "rocketride:sync") {
+    await runRocketRideSync(rawArgs.slice(1));
+    return;
+  }
   if (command !== "start") {
     throw new Error(`Unknown Rebase command: ${command}`);
   }
   await runStart(args);
+}
+
+async function runRocketRideSync(args: string[]) {
+  const rocketRideServerDir = valueArg(args, "--rocketride-server-dir");
+  const result = await syncRebaseRocketRideNode({
+    ...(rocketRideServerDir ? { rocketRideServerDir } : {})
+  });
+  console.log(`Synced Rebase RocketRide node to ${result.targetDir}`);
+  console.log(`Files: ${result.filesCopied.join(", ")}`);
 }
 
 async function runStart(args: Set<string>) {
@@ -50,15 +65,33 @@ async function runStart(args: Set<string>) {
   const rocketRide = await checkRocketRideRuntime({
     rocketRideUri: runtime.rocketRideUri
   });
-  if (!rocketRide.ok && !args.has("--skip-rocketride")) {
+  const skipRocketRide = args.has("--skip-rocketride");
+  if (!rocketRide.ok && !skipRocketRide) {
     throw new Error(
       `${rocketRide.message}\nRebase uses RocketRide pipelines for merge-aware coordination. Start RocketRide or rerun with --skip-rocketride for local coordinator development only.`
     );
   }
+  const rocketRideRunner = skipRocketRide
+    ? undefined
+    : createRocketRideRunner({
+        uri: runtime.rocketRideUri,
+        apiKey: process.env.ROCKETRIDE_APIKEY
+      });
+  if (rocketRideRunner) {
+    const pipelineStatus = await rocketRideRunner.validateRequiredPipelines?.();
+    if (!pipelineStatus?.ok) {
+      throw new Error(
+        `${pipelineStatus?.message ?? "RocketRide pipeline validation failed."}${
+          pipelineStatus?.lastError ? `\n${pipelineStatus.lastError}` : ""
+        }`
+      );
+    }
+  }
   const app = await createCoordinatorApp({
     repoRoot: runtime.repoRoot,
     dbPath: runtime.dbPath,
-    token: runtime.token
+    token: runtime.token,
+    ...(rocketRideRunner ? { rocketRide: rocketRideRunner } : {})
   });
 
   await app.listen({
@@ -263,6 +296,14 @@ async function openBrowser(url: string): Promise<void> {
     stdio: "ignore"
   });
   child.unref();
+}
+
+function valueArg(args: string[], name: string): string | undefined {
+  const inline = args.find((arg) => arg.startsWith(`${name}=`));
+  if (inline) return inline.slice(name.length + 1);
+  const index = args.indexOf(name);
+  if (index === -1) return undefined;
+  return args[index + 1];
 }
 
 main().catch((error: unknown) => {

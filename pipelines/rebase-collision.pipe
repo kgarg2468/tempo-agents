@@ -1,39 +1,49 @@
 {
-  "version": "1",
+  "version": 1,
   "name": "rebase-collision",
-  "description": "Group N worktree fingerprints into coordination episodes instead of noisy pairwise alerts.",
-  "inputs": {
-    "fingerprints": "array",
-    "plans": "array",
-    "graphFacts": "array",
-    "activeDecisions": "array"
+  "description": "Required Rebase pipeline. Produces typed { conflicts, episodes } coordination grouping output.",
+  "x-rebase": {
+    "contract": "collisionRunOutput",
+    "intent": "Group N worktree fingerprints into coordination episodes instead of noisy pairwise alerts."
   },
-  "outputs": {
-    "episodes": "array"
-  },
-  "nodes": [
+  "source": "source_1",
+  "components": [
     {
-      "id": "cluster-surfaces",
-      "type": "graph.connected_components",
-      "with": {
-        "groupBy": ["primarySurface", "affectedWorktreeIds"]
-      }
+      "id": "source_1",
+      "provider": "webhook",
+      "config": {
+        "key": "webhook://*",
+        "mode": "Source",
+        "name": "Rebase Collision Input",
+        "include": [{ "path": "*" }],
+        "parameters": {
+          "endpoint": "/pipe/process",
+          "port": 5565
+        },
+        "sync": false,
+        "type": "webhook"
+      },
+      "ui": {}
     },
     {
-      "id": "classify-risk",
-      "type": "llm.debate",
-      "with": {
-        "roles": ["proposer", "skeptic", "judge"],
-        "emitConfidence": true,
-        "emitEvidence": true
-      }
+      "id": "rebase_1",
+      "provider": "rebase_coordination",
+      "config": {
+        "operation": "collision"
+      },
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "source_1" }
+      ]
     },
     {
-      "id": "emit-episodes",
-      "type": "json.schema",
-      "with": {
-        "schema": "CoordinationEpisode[]"
-      }
+      "id": "response_1",
+      "provider": "response",
+      "config": {},
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "rebase_1" }
+      ]
     }
   ]
 }

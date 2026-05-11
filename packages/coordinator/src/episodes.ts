@@ -16,6 +16,9 @@ export interface BuildCoordinationEpisodesInput {
   agents: AgentSession[];
   decisions: ConflictDecision[];
   publications: ContractPublication[];
+  existingEpisodes?: CoordinationEpisode[] | undefined;
+  existingWorkOrders?: WorkOrder[] | undefined;
+  rocketRideRunIds?: string[] | undefined;
   createdAt: number;
 }
 
@@ -60,10 +63,17 @@ export function buildCoordinationEpisodes(
       surface,
       affectedWorktreeIds.join("|")
     );
+    const existingEpisode = findExistingEpisode({
+      episodes: input.existingEpisodes ?? [],
+      episodeId,
+      surface,
+      affectedWorktreeIds
+    });
     const ownerAgentSessionId = selectOwnerAgentSessionId({
       conflicts: group,
       agents: affectedAgents,
-      decisions: input.decisions
+      decisions: input.decisions,
+      existingEpisode
     });
     const mergeContract = buildMergeContract({
       repoId: input.repoId,
@@ -74,24 +84,34 @@ export function buildCoordinationEpisodes(
       publications: input.publications,
       updatedAt: input.createdAt
     });
+    const coordinated = isEpisodeCoordinated({
+      episodeId,
+      affectedAgentSessionIds,
+      mergeContract,
+      existingWorkOrders: input.existingWorkOrders ?? []
+    });
     const episode: CoordinationEpisode = {
       id: episodeId,
       repoId: input.repoId,
       surface,
-      status: "coordinating",
-      risk: highestRisk(group.map((conflict) => conflict.risk)),
+      status: coordinated ? "coordinated" : "coordinating",
+      risk: coordinated ? "medium" : highestRisk(group.map((conflict) => conflict.risk)),
       confidence: Math.max(...group.map((conflict) => conflict.confidence), 0),
       affectedWorktreeIds,
       affectedAgentSessionIds,
       conflictIds,
       ...(ownerAgentSessionId ? { ownerAgentSessionId } : {}),
       ...(mergeContract ? { mergeContract } : {}),
-      rocketRideRunIds: [],
-      createdAt: input.createdAt,
+      rocketRideRunIds: uniqueInOrder([
+        ...(existingEpisode?.rocketRideRunIds ?? []),
+        ...(input.rocketRideRunIds ?? [])
+      ]),
+      createdAt: existingEpisode?.createdAt ?? input.createdAt,
       updatedAt: input.createdAt
     };
     episodes.push(episode);
 
+    if (coordinated) continue;
     for (const agent of affectedAgents) {
       workOrders.push(
         buildWorkOrder({
@@ -172,6 +192,7 @@ function selectOwnerAgentSessionId(input: {
   conflicts: RebaseConflict[];
   agents: AgentSession[];
   decisions: ConflictDecision[];
+  existingEpisode?: CoordinationEpisode | undefined;
 }): string | undefined {
   const conflictIds = new Set(input.conflicts.map((conflict) => conflict.id));
   const activeDecision = input.decisions
@@ -183,6 +204,12 @@ function selectOwnerAgentSessionId(input: {
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
   if (activeDecision?.ownerAgentSessionId) return activeDecision.ownerAgentSessionId;
+  if (
+    input.existingEpisode?.ownerAgentSessionId &&
+    input.agents.some((agent) => agent.id === input.existingEpisode?.ownerAgentSessionId)
+  ) {
+    return input.existingEpisode.ownerAgentSessionId;
+  }
 
   const recommendedOwnerWorktreeId = input.conflicts
     .map((conflict) => conflict.classification?.recommendedOwnerWorktreeId)
@@ -255,6 +282,7 @@ function buildWorkOrder(input: {
   const contractSummary =
     input.mergeContract?.summary ??
     `${ownerName} owns ${input.episode.surface}; preserve that public shape before dependent edits.`;
+  const allowedFiles = uniqueSorted([...sharedFiles, ...(input.mergeContract?.files ?? [])]);
 
   return {
     id: stableId("work-order", input.episode.id, input.agent.id, String(revision)),
@@ -273,7 +301,7 @@ function buildWorkOrder(input: {
         ? `${input.agent.displayName} owns ${input.episode.surface}. Publish the canonical contract, then checkpoint before downstream edits.`
         : `${ownerName} owns ${input.episode.surface}. Adapt this worktree to the required contract, keep changes additive where possible, then checkpoint.`,
     requiredContract: contractSummary,
-    allowedFiles: [],
+    allowedFiles,
     blockedFiles: [],
     sharedFiles,
     nextCheckpoint:
@@ -285,8 +313,44 @@ function buildWorkOrder(input: {
   };
 }
 
+function findExistingEpisode(input: {
+  episodes: CoordinationEpisode[];
+  episodeId: string;
+  surface: string;
+  affectedWorktreeIds: string[];
+}): CoordinationEpisode | undefined {
+  const targetWorktrees = input.affectedWorktreeIds.join("|");
+  return input.episodes.find((episode) => episode.id === input.episodeId) ??
+    input.episodes.find(
+      (episode) =>
+        episode.surface === input.surface &&
+        [...episode.affectedWorktreeIds].sort().join("|") === targetWorktrees
+    );
+}
+
+function isEpisodeCoordinated(input: {
+  episodeId: string;
+  affectedAgentSessionIds: string[];
+  mergeContract?: MergeContract | undefined;
+  existingWorkOrders: WorkOrder[];
+}): boolean {
+  if (!input.mergeContract) return false;
+  return input.affectedAgentSessionIds.every((sessionId) =>
+    input.existingWorkOrders.some(
+      (workOrder) =>
+        workOrder.episodeId === input.episodeId &&
+        workOrder.agentSessionId === sessionId &&
+        workOrder.status === "completed"
+    )
+  );
+}
+
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+function uniqueInOrder(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function highestRisk(risks: RiskLevel[]): RiskLevel {

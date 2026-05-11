@@ -13,6 +13,7 @@ import {
   hookEventSchema,
   agentSessionSchema,
   interventionSchema,
+  mergeRiskAssessmentSchema,
   tokenCostEstimateSchema,
   worktreeSchema
 } from "./index.js";
@@ -289,6 +290,46 @@ describe("shared schemas", () => {
 
     expect(node.kind).toBe("surface");
     expect(edge.kind).toBe("touches");
+  });
+
+  it("validates predictive merge-risk evidence", () => {
+    const parsed = mergeRiskAssessmentSchema.parse({
+      id: "merge-risk-1",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      status: "blocked",
+      risk: "high",
+      safe: false,
+      diffHash: "diff-a+diff-b",
+      rocketRideRunId: "rr-merge-risk-1",
+      predictedConflicts: [
+        {
+          id: "predicted-1",
+          risk: "high",
+          reasonCode: "same_hunk",
+          summary: "Two worktrees edit the same Task hunk.",
+          files: ["src/shared/task.ts"],
+          symbols: ["Task"],
+          affectedWorktreeIds: ["wt-a", "wt-b"],
+          evidence: ["Overlapping hunks in src/shared/task.ts"],
+          blocking: true
+        }
+      ],
+      warnings: [],
+      requiredWorkOrders: ["work-order-agent-b-r1"],
+      evidence: [
+        {
+          label: "Shared hunk",
+          detail: "Both worktrees edit src/shared/task.ts near line 1.",
+          files: ["src/shared/task.ts"],
+          worktreeIds: ["wt-a", "wt-b"]
+        }
+      ],
+      createdAt: 1778000000000
+    });
+
+    expect(parsed.status).toBe("blocked");
+    expect(parsed.predictedConflicts[0]?.blocking).toBe(true);
   });
 
   it("validates debate verdicts and token-cost estimates on conflicts", () => {

@@ -307,6 +307,114 @@ describe("RebaseStore", () => {
     store.close();
   });
 
+  it("persists predictive merge-risk assessments", () => {
+    const store = createRebaseStore(":memory:");
+
+    store.upsertMergeRiskAssessment({
+      id: "merge-risk-1",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      status: "blocked",
+      risk: "high",
+      safe: false,
+      diffHash: "diff-a+diff-b",
+      rocketRideRunId: "rr-merge-risk-1",
+      predictedConflicts: [
+        {
+          id: "predicted-1",
+          risk: "high",
+          reasonCode: "same_hunk",
+          summary: "Two worktrees edit the same Task hunk.",
+          files: ["src/shared/task.ts"],
+          symbols: ["Task"],
+          affectedWorktreeIds: ["wt-a", "wt-b"],
+          evidence: ["Overlapping hunks in src/shared/task.ts"],
+          blocking: true
+        }
+      ],
+      warnings: [],
+      requiredWorkOrders: ["work-order-agent-b-r1"],
+      evidence: [
+        {
+          label: "Shared hunk",
+          detail: "Both worktrees edit src/shared/task.ts near line 1.",
+          files: ["src/shared/task.ts"],
+          worktreeIds: ["wt-a", "wt-b"]
+        }
+      ],
+      createdAt: 1778000000000
+    });
+
+    expect(store.listMergeRiskAssessments("repo-1")).toEqual([
+      expect.objectContaining({
+        id: "merge-risk-1",
+        status: "blocked",
+        rocketRideRunId: "rr-merge-risk-1",
+        requiredWorkOrders: ["work-order-agent-b-r1"]
+      })
+    ]);
+    expect(store.listLatestMergeRiskAssessments("repo-1")[0]?.episodeId).toBe(
+      "episode-1"
+    );
+    store.close();
+  });
+
+  it("supersedes older active work order revisions for the same episode and agent", () => {
+    const store = createRebaseStore(":memory:");
+
+    store.upsertWorkOrder({
+      id: "work-order-agent-b-r1",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: "agent-b",
+      role: "adapter",
+      status: "queued",
+      revision: 1,
+      title: "Adapt to Task contract",
+      summary: "Wait for the owner contract.",
+      requiredContract: "agent-a owns Task contract.",
+      allowedFiles: ["src/shared/task.ts"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after adapting.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.markWorkOrderFetched("work-order-agent-b-r1", 1778000000001);
+
+    store.upsertWorkOrder({
+      id: "work-order-agent-b-r2",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: "agent-b",
+      role: "adapter",
+      status: "queued",
+      revision: 2,
+      title: "Adapt to Task contract",
+      summary: "Preserve the published owner contract.",
+      requiredContract:
+        "Task includes label, project, subtitle, reminderAt, archived, and batchId.",
+      allowedFiles: ["src/shared/task.ts"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after adapting.",
+      createdAt: 1778000000002,
+      updatedAt: 1778000000002
+    });
+
+    expect(
+      store
+        .listWorkOrders("repo-1")
+        .map((order) => ({ id: order.id, status: order.status }))
+        .sort((left, right) => left.id.localeCompare(right.id))
+    ).toEqual([
+      { id: "work-order-agent-b-r1", status: "superseded" },
+      { id: "work-order-agent-b-r2", status: "queued" }
+    ]);
+
+    store.close();
+  });
+
   it("persists evidence packets and prunes expired local evidence", async () => {
     const store = createRebaseStore(":memory:");
     store.upsertHookEvent({

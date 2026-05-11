@@ -106,6 +106,65 @@ describe("Rebase MCP tool handlers", () => {
     store.close();
   });
 
+  it("does not locally synthesize coordination episodes in required RocketRide mode", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-rr-required-"));
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store,
+      rocketRide: {
+        status: () => ({
+          mode: "required",
+          ok: true,
+          uri: "http://127.0.0.1:5565",
+          pipelineStatus: "validated",
+          authoritative: true,
+          message: "RocketRide required"
+        }),
+        async runPipeline() {
+          throw new Error("MCP sync should not call RocketRide directly");
+        }
+      }
+    });
+
+    const left = handlers.join({
+      cwd: path.join(dir, "left"),
+      agentKind: "codex",
+      displayName: "left-agent"
+    });
+    const right = handlers.join({
+      cwd: path.join(dir, "right"),
+      agentKind: "codex",
+      displayName: "right-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "type",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [left.worktreeId, right.worktreeId],
+      affectedSurfaces: ["Task type"],
+      evidence: ["Both fingerprints touch Task type"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+
+    const checkpoint = handlers.checkpoint({ sessionId: left.sessionId });
+
+    expect(checkpoint.coordinationEpisodes).toEqual([]);
+    expect(checkpoint.workOrders).toEqual([]);
+    expect(store.listCoordinationEpisodes("repo-1")).toEqual([]);
+
+    store.close();
+  });
+
   it("records one decision, delivers directions on checkpoint, and acknowledges receipt", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-decision-"));
     const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
@@ -334,7 +393,7 @@ describe("Rebase MCP tool handlers", () => {
     store.close();
   });
 
-  it("does not keep pausing or re-offering choices after a conflict decision is active", async () => {
+  it("does not re-offer choices after a decision but keeps the owner paused until contract publication", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-decided-"));
     const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
     const handlers = createMcpToolHandlers({
@@ -385,12 +444,15 @@ describe("Rebase MCP tool handlers", () => {
     expect(ownerCheckpoint.directions[0]?.directive?.role).toBe("contract_owner");
 
     const afterDecision = handlers.checkpoint({ sessionId: owner.sessionId });
-    expect(afterDecision.risk).toBe("low");
-    expect(afterDecision.pause).toBe(false);
-    expect(afterDecision.keepWaiting).toBe(false);
+    expect(afterDecision.risk).toBe("high");
+    expect(afterDecision.pause).toBe(true);
+    expect(afterDecision.keepWaiting).toBe(true);
     expect(afterDecision.choices).toEqual([]);
     expect(afterDecision.activeDecisions[0]?.selectedOptionTitle).toBe(
       "Split ownership"
+    );
+    expect(afterDecision.notifications.join("\n")).toContain(
+      "missing published contract"
     );
 
     store.close();
@@ -830,4 +892,529 @@ describe("Rebase MCP tool handlers", () => {
 
     store.close();
   });
+
+  it("keeps fetched active work orders visible until a checkpoint completes them", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-active-work-order-"));
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+
+    const owner = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapter = handlers.join({
+      cwd: path.join(dir, "bulk"),
+      agentKind: "codex",
+      displayName: "bulk-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    handlers.recordDecision({
+      sessionId: owner.sessionId,
+      conflictId: "conflict-1",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection: "labels-agent owns the Task contract.",
+      ownerAgentSessionId: owner.sessionId,
+      createdBy: "agent"
+    });
+
+    const delivered = await handlers.waitForDirection({
+      sessionId: adapter.sessionId,
+      timeoutMs: 1
+    });
+    expect(delivered.workOrders[0]?.status).toBe("queued");
+
+    const checkpoint = handlers.checkpoint({ sessionId: adapter.sessionId });
+    expect(checkpoint.workOrders[0]).toMatchObject({
+      id: delivered.workOrders[0]?.id,
+      status: "fetched",
+      role: "adapter"
+    });
+
+    store.close();
+  });
+
+  it("hard-pauses checkpoints when predictive merge-risk is blocked", () => {
+    const store = createRebaseStore(":memory:");
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: "/tmp/repo",
+      store,
+      rocketRide: {
+        status: () => ({
+          mode: "required",
+          ok: true,
+          uri: "http://127.0.0.1:5565",
+          pipelineStatus: "validated",
+          authoritative: true,
+          message: "RocketRide pipelines validated."
+        }),
+        async runPipeline() {
+          throw new Error("not used by checkpoint merge-risk read");
+        }
+      }
+    });
+    const session = handlers.join({
+      cwd: "/tmp/repo/labels",
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "blocked",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [session.worktreeId],
+      affectedAgentSessionIds: [session.sessionId],
+      conflictIds: ["conflict-1"],
+      rocketRideRunIds: ["rr-merge-risk-1"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertMergeRiskAssessment({
+      id: "merge-risk-1",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      status: "blocked",
+      risk: "high",
+      safe: false,
+      diffHash: "diff-a+diff-b",
+      rocketRideRunId: "rr-merge-risk-1",
+      predictedConflicts: [
+        {
+          id: "predicted-1",
+          risk: "high",
+          reasonCode: "same_hunk",
+          summary: "Two worktrees edit the same Task hunk.",
+          files: ["src/shared/task.ts"],
+          symbols: ["Task"],
+          affectedWorktreeIds: [session.worktreeId],
+          evidence: ["Overlapping hunks in src/shared/task.ts"],
+          blocking: true
+        }
+      ],
+      warnings: [],
+      requiredWorkOrders: ["work-order-agent-b-r1"],
+      evidence: [
+        {
+          label: "Shared hunk",
+          detail: "Both worktrees edit src/shared/task.ts.",
+          files: ["src/shared/task.ts"],
+          worktreeIds: [session.worktreeId]
+        }
+      ],
+      createdAt: 1778000000000
+    });
+
+    const checkpoint = handlers.checkpoint({ sessionId: session.sessionId });
+
+    expect(checkpoint.pause).toBe(true);
+    expect(checkpoint.risk).toBe("high");
+    expect(checkpoint.mergeRisks[0]?.status).toBe("blocked");
+    expect(checkpoint.notifications.join("\n")).toContain(
+      "Predictive merge risk blocked"
+    );
+    store.close();
+  });
+
+  it("publishes the active episode contract without requiring an agent to know the conflict id", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-infer-contract-"));
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+
+    const owner = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapter = handlers.join({
+      cwd: path.join(dir, "reminders"),
+      agentKind: "codex",
+      displayName: "reminders-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    handlers.recordDecision({
+      sessionId: owner.sessionId,
+      conflictId: "conflict-1",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection: "labels-agent owns the Task contract.",
+      ownerAgentSessionId: owner.sessionId,
+      createdBy: "agent"
+    });
+
+    const published = handlers.checkpoint({
+      sessionId: owner.sessionId,
+      publishContract: {
+        surface: "Task contract",
+        shapeSummary:
+          "Task includes label, project, subtitle, reminderAt, archived, and batchId.",
+        files: ["src/shared/task.ts"]
+      } as Parameters<typeof handlers.checkpoint>[0]["publishContract"]
+    });
+
+    expect(published.publications[0]).toMatchObject({
+      conflictId: "conflict-1",
+      ownerAgentSessionId: owner.sessionId
+    });
+    const adapterCheckpoint = handlers.checkpoint({ sessionId: adapter.sessionId });
+    expect(adapterCheckpoint.publications[0]?.shapeSummary).toContain("batchId");
+
+    store.close();
+  });
+
+  it("publishes a multi-conflict episode contract without requiring an agent to know the conflict id", async () => {
+    const dir = await mkdtemp(
+      path.join(tmpdir(), "rebase-mcp-infer-episode-contract-")
+    );
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+
+    const owner = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapterA = handlers.join({
+      cwd: path.join(dir, "reminders"),
+      agentKind: "codex",
+      displayName: "reminders-agent"
+    });
+    const adapterB = handlers.join({
+      cwd: path.join(dir, "bulk"),
+      agentKind: "codex",
+      displayName: "bulk-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-ab",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapterA.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertConflict({
+      id: "conflict-ac",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapterB.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000001,
+      updatedAt: 1778000000001
+    });
+    handlers.recordDecision({
+      sessionId: owner.sessionId,
+      conflictId: "conflict-ab",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection: "labels-agent owns the Task contract.",
+      ownerAgentSessionId: owner.sessionId,
+      createdBy: "agent"
+    });
+
+    const published = handlers.checkpoint({
+      sessionId: owner.sessionId,
+      publishContract: {
+        surface: "Task contract",
+        shapeSummary:
+          "Task includes label, project, subtitle, reminderAt, archived, and batchId.",
+        files: ["src/shared/task.ts"]
+      } as Parameters<typeof handlers.checkpoint>[0]["publishContract"]
+    });
+
+    expect(published.publications[0]).toMatchObject({
+      ownerAgentSessionId: owner.sessionId
+    });
+    expect(published.publications[0]?.conflictId).toMatch(/^conflict-a[bc]$/);
+    expect(
+      handlers.checkpoint({ sessionId: adapterA.sessionId }).publications[0]
+        ?.shapeSummary
+    ).toContain("batchId");
+    expect(
+      handlers.checkpoint({ sessionId: adapterB.sessionId }).publications[0]
+        ?.shapeSummary
+    ).toContain("batchId");
+
+    store.close();
+  });
+
+  it("treats same-checkpoint owner publication as satisfying the owner work order in required RocketRide mode", async () => {
+    const dir = await mkdtemp(
+      path.join(tmpdir(), "rebase-mcp-required-owner-publication-")
+    );
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store,
+      rocketRide: {
+        status: () => ({
+          mode: "required",
+          ok: true,
+          uri: "http://127.0.0.1:5565",
+          pipelineStatus: "validated",
+          authoritative: true,
+          message: "RocketRide pipelines validated."
+        }),
+        async runPipeline() {
+          throw new Error("not used by checkpoint publication");
+        }
+      }
+    });
+
+    const owner = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapter = handlers.join({
+      cwd: path.join(dir, "reminders"),
+      agentKind: "codex",
+      displayName: "reminders-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "coordinating",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedAgentSessionIds: [owner.sessionId, adapter.sessionId],
+      conflictIds: ["conflict-1"],
+      ownerAgentSessionId: owner.sessionId,
+      rocketRideRunIds: ["rr-run-1"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertWorkOrder({
+      id: "work-order-owner",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: owner.sessionId,
+      role: "contract_owner",
+      status: "queued",
+      revision: 1,
+      title: "Own Task contract",
+      summary: "Publish the canonical Task contract.",
+      requiredContract: "labels-agent owns Task contract.",
+      allowedFiles: ["src/shared/task.ts"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Publish the owner contract.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+
+    const published = handlers.checkpoint({
+      sessionId: owner.sessionId,
+      publishContract: {
+        surface: "Task contract",
+        shapeSummary:
+          "Task includes label, project, subtitle, reminderAt, archived, and batchId.",
+        files: ["src/shared/task.ts"]
+      }
+    });
+
+    expect(published.pause).toBe(false);
+    expect(store.listWorkOrders("repo-1")[0]?.status).toBe("completed");
+
+    store.close();
+  });
+
+  it("pauses an adapter checkpoint until its fingerprint satisfies the active work order contract", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-enforce-work-order-"));
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+
+    const owner = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapter = handlers.join({
+      cwd: path.join(dir, "bulk"),
+      agentKind: "codex",
+      displayName: "bulk-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    handlers.recordDecision({
+      sessionId: owner.sessionId,
+      conflictId: "conflict-1",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection: "labels-agent owns the Task contract.",
+      ownerAgentSessionId: owner.sessionId,
+      createdBy: "agent"
+    });
+    handlers.checkpoint({
+      sessionId: owner.sessionId,
+      publishContract: {
+        conflictId: "conflict-1",
+        surface: "Task contract",
+        shapeSummary:
+          "Task includes label, project, subtitle, reminderAt, archived, and batchId.",
+        files: ["src/shared/task.ts"]
+      }
+    });
+    store.upsertFingerprint(makeFingerprint(adapter.worktreeId, "bulk-only", [
+      "Task adds archived and batchId."
+    ]));
+
+    const blocked = handlers.checkpoint({ sessionId: adapter.sessionId });
+
+    expect(blocked.pause).toBe(true);
+    expect(blocked.notifications.join("\n")).toContain("missing label");
+
+    store.upsertFingerprint(
+      makeFingerprint(adapter.worktreeId, "combined", [
+        "Task includes label, project, subtitle, reminderAt, archived, and batchId."
+      ])
+    );
+    const completed = handlers.checkpoint({ sessionId: adapter.sessionId });
+
+    expect(completed.pause).toBe(false);
+    expect(
+      store
+        .listWorkOrders("repo-1")
+        .find((order) => order.agentSessionId === adapter.sessionId)?.status
+    ).toBe("completed");
+
+    store.close();
+  });
 });
+
+function makeFingerprint(
+  worktreeId: string,
+  diffHash: string,
+  contractChanges: string[]
+) {
+  return {
+    id: `fingerprint-${diffHash}`,
+    repoId: "repo-1",
+    worktreeId,
+    diffHash,
+    createdAt: diffHash === "combined" ? 1778000000010 : 1778000000000,
+    filesTouched: ["src/shared/task.ts"],
+    symbols: {
+      added: [],
+      modified: ["Task"],
+      removed: []
+    },
+    surfaces: [
+      {
+        id: `surface-${diffHash}`,
+        label: "Task model",
+        kind: "model" as const,
+        files: ["src/shared/task.ts"],
+        confidence: 0.9,
+        evidence: contractChanges
+      }
+    ],
+    semanticSummary: contractChanges.join(" "),
+    contractChanges,
+    confidence: 0.9,
+    source: "heuristic" as const
+  };
+}

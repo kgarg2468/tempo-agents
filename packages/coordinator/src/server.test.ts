@@ -934,4 +934,57 @@ describe("coordinator server", () => {
       "agent-owner"
     );
   });
+
+  it("exposes predictive merge-risk evidence for dashboard consumers", async () => {
+    const repoRoot = await createRepo();
+    const app = await createCoordinatorApp({
+      repoRoot,
+      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      token: "test-token",
+      startWatcher: false
+    });
+    apps.push(app);
+    app.rebase.store.upsertMergeRiskAssessment({
+      id: "merge-risk-1",
+      repoId: app.rebase.repoId,
+      episodeId: "episode-1",
+      status: "blocked",
+      risk: "high",
+      safe: false,
+      diffHash: "diff-a+diff-b",
+      rocketRideRunId: "rr-merge-risk-1",
+      predictedConflicts: [
+        {
+          id: "predicted-1",
+          risk: "high",
+          reasonCode: "same_hunk",
+          summary: "Two worktrees edit the same Task hunk.",
+          files: ["src/shared/task.ts"],
+          symbols: ["Task"],
+          affectedWorktreeIds: ["wt-a", "wt-b"],
+          evidence: ["Overlapping hunks in src/shared/task.ts"],
+          blocking: true
+        }
+      ],
+      warnings: [],
+      requiredWorkOrders: ["work-order-agent-b-r1"],
+      evidence: [
+        {
+          label: "Shared hunk",
+          detail: "Both worktrees edit src/shared/task.ts.",
+          files: ["src/shared/task.ts"],
+          worktreeIds: ["wt-a", "wt-b"]
+        }
+      ],
+      createdAt: 1778000000000
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/merge-risks" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().mergeRisks[0]).toMatchObject({
+      status: "blocked",
+      rocketRideRunId: "rr-merge-risk-1"
+    });
+  });
 });

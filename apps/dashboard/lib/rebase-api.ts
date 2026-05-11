@@ -8,6 +8,7 @@ import type {
   EvidencePacket,
   Fingerprint,
   Intervention,
+  MergeRiskAssessment,
   RebaseConflict,
   RebaseEvent,
   RebaseGraphEdge,
@@ -38,6 +39,7 @@ export interface RebaseSnapshot {
   advisories: Advisory[];
   interventions: Intervention[];
   coordinationEpisodes: CoordinationEpisode[];
+  mergeRisks: MergeRiskAssessment[];
   workOrders: WorkOrder[];
   decisions: ConflictDecision[];
   publications: ContractPublication[];
@@ -67,6 +69,7 @@ export async function getRebaseSnapshot(): Promise<RebaseSnapshot> {
     advisories,
     interventions,
     coordinationEpisodes,
+    mergeRisks,
     workOrders,
     decisions,
     publications,
@@ -88,6 +91,7 @@ export async function getRebaseSnapshot(): Promise<RebaseSnapshot> {
       fetchJson<{ coordinationEpisodes: CoordinationEpisode[] }>(
         "/api/coordination-episodes"
       ),
+      fetchJson<{ mergeRisks: MergeRiskAssessment[] }>("/api/merge-risks"),
       fetchJson<{ workOrders: WorkOrder[] }>("/api/work-orders"),
       fetchJson<{ decisions: ConflictDecision[] }>("/api/decisions"),
       fetchJson<{ publications: ContractPublication[] }>(
@@ -121,6 +125,7 @@ export async function getRebaseSnapshot(): Promise<RebaseSnapshot> {
     coordinationEpisodes: valueOr(coordinationEpisodes, {
       coordinationEpisodes: []
     }).coordinationEpisodes,
+    mergeRisks: valueOr(mergeRisks, { mergeRisks: [] }).mergeRisks,
     workOrders: valueOr(workOrders, { workOrders: [] }).workOrders,
     decisions: valueOr(decisions, { decisions: [] }).decisions,
     publications: valueOr(publications, { publications: [] }).publications,
@@ -171,6 +176,7 @@ function disconnectedSnapshot(): RebaseSnapshot {
     advisories: [],
     interventions: [],
     coordinationEpisodes: [],
+    mergeRisks: [],
     workOrders: [],
     decisions: [],
     publications: [],
@@ -349,6 +355,44 @@ function demoSnapshot(connected: boolean): RebaseSnapshot {
         rocketRideRunIds: ["rr-demo-run"],
         createdAt: now,
         updatedAt: now
+      }
+    ],
+    mergeRisks: [
+      {
+        id: "merge-risk-demo",
+        repoId: repo.id,
+        episodeId: "episode-task-contract",
+        status: "blocked",
+        risk: "high",
+        safe: false,
+        diffHash: "hash-0+hash-1",
+        rocketRideRunId: "rr-demo-risk",
+        predictedConflicts: [
+          {
+            id: "predicted-task-hunk",
+            risk: "high",
+            reasonCode: "shared_contract_without_contract",
+            summary:
+              "Task contract is high risk until one owner publishes the combined shape.",
+            files: ["src/db/schema.ts"],
+            symbols: ["Task"],
+            affectedWorktreeIds: ["wt-a", "wt-b"],
+            evidence: ["Both fingerprints touch Task model"],
+            blocking: true
+          }
+        ],
+        warnings: [],
+        requiredWorkOrders: ["work-order-demo"],
+        evidence: [
+          {
+            label: "Missing merge contract",
+            detail:
+              "A high-risk shared surface needs an owner contract before agents continue.",
+            files: ["src/db/schema.ts"],
+            worktreeIds: ["wt-a", "wt-b"]
+          }
+        ],
+        createdAt: now
       }
     ],
     workOrders: [

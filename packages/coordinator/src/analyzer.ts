@@ -12,16 +12,24 @@ import { classificationKey, detectConflicts } from "./conflict.js";
 import { createCompatibilityClassification } from "./compatibility.js";
 import { worktreeIdFor } from "./ids.js";
 import { createStructuredFingerprint } from "./openai-fingerprint.js";
+import { parseFingerprintRunOutput } from "./rocketride-contracts.js";
 import { createRebasePathFilter } from "./path-ignore.js";
+import {
+  isRocketRideRequired,
+  runRocketRidePipeline,
+  type RocketRideCoordinator
+} from "./rocketride.js";
 
 export interface AnalyzeWorktreesInput {
   repoRoot: string;
   repoId: string;
+  rocketRide?: RocketRideCoordinator | undefined;
 }
 
 export interface AnalyzeWorktreesResult {
   fingerprints: Fingerprint[];
   conflicts: RebaseConflict[];
+  rocketRideRunIds: string[];
 }
 
 export async function analyzeWorktreesOnce(
@@ -31,6 +39,8 @@ export async function analyzeWorktreesOnce(
   const fingerprints: Fingerprint[] = [];
   const diffsByWorktreeId = new Map<string, string>();
   const pathFilter = createRebasePathFilter(input.repoRoot);
+  const rocketRideRunIds: string[] = [];
+  const rocketRideRequired = isRocketRideRequired(input.rocketRide);
 
   for (const worktree of worktrees) {
     const diff = await getWorktreeDiff(worktree.path);
@@ -48,16 +58,43 @@ export async function analyzeWorktreesOnce(
       }))
     );
 
-    fingerprints.push(
-      await createStructuredFingerprint({
-        repoId: input.repoId,
-        worktreeId,
-        diffHash: hashNormalizedDiff(normalized),
-        files: snapshots,
-        diff: filteredDiff
-      })
+    const fingerprintInput = {
+      repoId: input.repoId,
+      worktreeId,
+      diffHash: hashNormalizedDiff(normalized),
+      createdAt: Date.now(),
+      files: snapshots,
+      diff: filteredDiff
+    };
+    const rocketRideRun = await runRocketRidePipeline(
+      input.rocketRide,
+      "rebase-fingerprint",
+      {
+        ...fingerprintInput,
+        repoRoot: input.repoRoot,
+        worktree,
+        hookEvidence: [],
+        graphFacts: []
+      }
     );
+    if (rocketRideRun) {
+      rocketRideRunIds.push(rocketRideRun.runId);
+      if (rocketRideRequired) {
+        fingerprints.push(parseFingerprintRunOutput(rocketRideRun.output).fingerprint);
+        continue;
+      }
+    }
+
+    fingerprints.push(await createStructuredFingerprint(fingerprintInput));
   }
+  if (rocketRideRequired) {
+    return {
+      fingerprints,
+      conflicts: [],
+      rocketRideRunIds
+    };
+  }
+
   const classifications = await classifyFingerprintPairs(
     fingerprints,
     diffsByWorktreeId
@@ -65,7 +102,8 @@ export async function analyzeWorktreesOnce(
 
   return {
     fingerprints,
-    conflicts: detectConflicts(fingerprints, { classifications })
+    conflicts: detectConflicts(fingerprints, { classifications }),
+    rocketRideRunIds
   };
 }
 

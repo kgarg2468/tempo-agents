@@ -6,6 +6,7 @@ import type {
   ContractPublication,
   Fingerprint,
   Intervention,
+  MergeRiskAssessment,
   RiskLevel,
   RebaseConflict,
   WorkOrder
@@ -19,12 +20,14 @@ import {
 } from "./guidance.js";
 import { upsertAgentGraph } from "./graph.js";
 import { worktreeIdFor } from "./ids.js";
+import { isRocketRideRequired, type RocketRideCoordinator } from "./rocketride.js";
 import type { RebaseStore } from "./store.js";
 
 export interface McpToolContext {
   repoId: string;
   repoRoot: string;
   store: RebaseStore;
+  rocketRide?: RocketRideCoordinator | undefined;
 }
 
 export interface JoinInput {
@@ -51,7 +54,7 @@ export interface CheckpointInput {
 }
 
 export interface PublishContractInput {
-  conflictId: string;
+  conflictId?: string | undefined;
   surface: string;
   shapeSummary: string;
   files?: string[] | undefined;
@@ -86,6 +89,7 @@ export interface CheckpointResult {
   directions: Intervention[];
   workOrders: WorkOrder[];
   coordinationEpisodes: CoordinationEpisode[];
+  mergeRisks: MergeRiskAssessment[];
   activeDecisions: ActiveDecisionBrief[];
   publications: ContractPublication[];
   keepWaiting: boolean;
@@ -107,6 +111,7 @@ export interface SessionStateResult {
   queuedDirections: Intervention[];
   queuedWorkOrders: WorkOrder[];
   coordinationEpisodes: CoordinationEpisode[];
+  mergeRisks: MergeRiskAssessment[];
 }
 
 export interface CollisionRiskInput {
@@ -149,6 +154,7 @@ export interface WaitForDirectionResult {
   directions: Intervention[];
   workOrders: WorkOrder[];
   coordinationEpisodes: CoordinationEpisode[];
+  mergeRisks: MergeRiskAssessment[];
   choices: ConflictChoiceBrief[];
   activeDecisions: ActiveDecisionBrief[];
   waitingOn?: WaitingOnBrief | undefined;
@@ -225,6 +231,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
           directions: [],
           workOrders: [],
           coordinationEpisodes: [],
+          mergeRisks: [],
           activeDecisions: [],
           publications: [],
           keepWaiting: false,
@@ -233,6 +240,9 @@ export function createMcpToolHandlers(context: McpToolContext) {
       }
       context.store.updateAgentCheckpoint(input.sessionId, checkpointAt);
 
+      if (input.publishContract && !input.publishContract.conflictId) {
+        syncCoordinationState(context.store, context.repoId, checkpointAt, context.rocketRide);
+      }
       const publication = input.publishContract
         ? publishContractShape({
             store: context.store,
@@ -243,7 +253,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
           })
         : null;
 
-      syncCoordinationState(context.store, context.repoId, checkpointAt);
+      syncCoordinationState(context.store, context.repoId, checkpointAt, context.rocketRide);
       ensureQueuedDirectionsForSession(context.store, context.repoId, input.sessionId);
       const directions = deliverQueuedDirections(
         context.store,
@@ -253,13 +263,20 @@ export function createMcpToolHandlers(context: McpToolContext) {
       const workOrders = deliverQueuedWorkOrders(
         context.store,
         context.repoId,
-        input.sessionId
+        input.sessionId,
+        { includeActive: true }
       );
       const coordinationEpisodes = relevantCoordinationEpisodesForSession(
         context.store,
         context.repoId,
         input.sessionId
       );
+      const mergeRisks = mergeRisksForEpisodes(
+        context.store,
+        context.repoId,
+        coordinationEpisodes
+      );
+      const blockingMergeRisks = mergeRisks.filter(isBlockingMergeRisk);
       const affectingConflicts = conflictsForSession(
         context.store,
         context.repoId,
@@ -275,18 +292,54 @@ export function createMcpToolHandlers(context: McpToolContext) {
           conflict.classification?.kind !== "coordination_notice" &&
           !isIntegrationConflict(context.store, context.repoId, conflict)
       );
+      const episodeManagedConflictIds = new Set(
+        coordinationEpisodes
+          .filter((episode) => episode.ownerAgentSessionId)
+          .flatMap((episode) => episode.conflictIds)
+      );
       const unresolvedConflicts = blockingConflicts.filter(
-        (conflict) => !context.store.getActiveConflictDecision(conflict.id)
+        (conflict) =>
+          !context.store.getActiveConflictDecision(conflict.id) &&
+          !episodeManagedConflictIds.has(conflict.id)
       );
       const activeDecisions = activeDecisionBriefsForConflicts(
         context.store,
         blockingConflicts
       );
-      const risk = highestRisk(unresolvedConflicts.map((conflict) => conflict.risk));
+      const workOrderEvaluations = evaluateWorkOrdersForCheckpoint({
+        store: context.store,
+        repoId: context.repoId,
+        session,
+        workOrders,
+        coordinationEpisodes,
+        evaluatedAt: checkpointAt
+      });
+      const workOrderViolations = workOrderEvaluations.filter(
+        (evaluation) => !evaluation.satisfied
+      );
+      const conflictRisk = highestRisk(
+        unresolvedConflicts.map((conflict) => conflict.risk)
+      );
+      const risk: RiskLevel =
+        workOrderViolations.length > 0 || blockingMergeRisks.length > 0
+          ? "high"
+          : conflictRisk;
       const notifications = unresolvedConflicts.map(
         (conflict) =>
           `${conflict.risk.toUpperCase()} risk: ${conflict.title}. ${conflict.summary}`
       );
+      for (const violation of workOrderViolations) {
+        notifications.push(
+          `HIGH risk: Active work order ${violation.workOrder.title} is incomplete; missing ${violation.missingTerms.join(", ")}.`
+        );
+      }
+      for (const mergeRisk of blockingMergeRisks) {
+        notifications.push(
+          `HIGH risk: Predictive merge risk blocked ${mergeRisk.episodeId}; ${mergeRisk.predictedConflicts
+            .map((conflict) => conflict.summary)
+            .join(" ")}`
+        );
+      }
       for (const notice of notices) {
         notifications.push(
           `${
@@ -324,6 +377,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
         directions,
         workOrders,
         coordinationEpisodes,
+        mergeRisks,
         activeDecisions,
         publications: [
           ...(publication ? [publication] : []),
@@ -334,8 +388,14 @@ export function createMcpToolHandlers(context: McpToolContext) {
           )
             .filter((item) => item.id !== publication?.id)
         ],
-        keepWaiting: unresolvedConflicts.some(isBlockingConflict),
-        pause: unresolvedConflicts.some(isBlockingConflict)
+        keepWaiting:
+          unresolvedConflicts.some(isBlockingConflict) ||
+          workOrderViolations.length > 0 ||
+          blockingMergeRisks.length > 0,
+        pause:
+          unresolvedConflicts.some(isBlockingConflict) ||
+          workOrderViolations.length > 0 ||
+          blockingMergeRisks.length > 0
       };
     },
 
@@ -367,6 +427,17 @@ export function createMcpToolHandlers(context: McpToolContext) {
               context.repoId,
               input.sessionId
             )
+          : [],
+        mergeRisks: session
+          ? mergeRisksForEpisodes(
+              context.store,
+              context.repoId,
+              relevantCoordinationEpisodesForSession(
+                context.store,
+                context.repoId,
+                input.sessionId
+              )
+            )
           : []
       };
     },
@@ -397,7 +468,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
     },
 
     fetchIntervention(input: FetchInterventionInput): FetchInterventionResult {
-      syncCoordinationState(context.store, context.repoId, Date.now());
+      syncCoordinationState(context.store, context.repoId, Date.now(), context.rocketRide);
       ensureQueuedDirectionsForSession(context.store, context.repoId, input.sessionId);
       return {
         directions: deliverQueuedDirections(
@@ -408,7 +479,8 @@ export function createMcpToolHandlers(context: McpToolContext) {
         workOrders: deliverQueuedWorkOrders(
           context.store,
           context.repoId,
-          input.sessionId
+          input.sessionId,
+          { includeActive: true }
         )
       };
     },
@@ -472,7 +544,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
       );
       const start = Date.now();
       for (;;) {
-        syncCoordinationState(context.store, context.repoId, Date.now());
+        syncCoordinationState(context.store, context.repoId, Date.now(), context.rocketRide);
         ensureQueuedDirectionsForSession(context.store, context.repoId, input.sessionId);
         const directions = deliverQueuedDirections(
           context.store,
@@ -482,7 +554,8 @@ export function createMcpToolHandlers(context: McpToolContext) {
         const workOrders = deliverQueuedWorkOrders(
           context.store,
           context.repoId,
-          input.sessionId
+          input.sessionId,
+          { includeActive: false }
         );
         if (directions.length > 0 || workOrders.length > 0) {
           return {
@@ -492,6 +565,15 @@ export function createMcpToolHandlers(context: McpToolContext) {
               context.store,
               context.repoId,
               input.sessionId
+            ),
+            mergeRisks: mergeRisksForEpisodes(
+              context.store,
+              context.repoId,
+              relevantCoordinationEpisodesForSession(
+                context.store,
+                context.repoId,
+                input.sessionId
+              )
             ),
             choices: choicesForSession(context.store, context.repoId, input.sessionId),
             activeDecisions: activeDecisionBriefsForSession(
@@ -521,6 +603,15 @@ export function createMcpToolHandlers(context: McpToolContext) {
           context.store,
           context.repoId,
           input.sessionId
+        ),
+        mergeRisks: mergeRisksForEpisodes(
+          context.store,
+          context.repoId,
+          relevantCoordinationEpisodesForSession(
+            context.store,
+            context.repoId,
+            input.sessionId
+          )
         ),
         choices,
         activeDecisions: activeDecisionBriefsForSession(
@@ -566,27 +657,41 @@ function deliverQueuedDirections(
 function deliverQueuedWorkOrders(
   store: RebaseStore,
   repoId: string,
-  sessionId: string
+  sessionId: string,
+  options: { includeActive?: boolean } = {}
 ): WorkOrder[] {
   const workOrders = store.listQueuedWorkOrders(repoId, sessionId);
   const fetchedAt = Date.now();
   for (const workOrder of workOrders) {
     store.markWorkOrderFetched(workOrder.id, fetchedAt);
   }
-  return workOrders;
+  const activeWorkOrders = options.includeActive
+    ? store.listActiveWorkOrders(repoId, sessionId)
+    : [];
+  const seen = new Set<string>();
+  return [...workOrders, ...activeWorkOrders].filter((workOrder) => {
+    if (seen.has(workOrder.id)) return false;
+    seen.add(workOrder.id);
+    return true;
+  });
 }
 
 function syncCoordinationState(
   store: RebaseStore,
   repoId: string,
-  createdAt: number
+  createdAt: number,
+  rocketRide?: RocketRideCoordinator | undefined
 ): void {
+  if (isRocketRideRequired(rocketRide)) return;
+
   const result = buildCoordinationEpisodes({
     repoId,
     conflicts: store.listConflicts(repoId),
     agents: store.listAgentSessions(repoId),
     decisions: store.listConflictDecisions(repoId),
     publications: store.listContractPublications(repoId),
+    existingEpisodes: store.listCoordinationEpisodes(repoId),
+    existingWorkOrders: store.listWorkOrders(repoId),
     createdAt
   });
   const activeEpisodeIds = new Set(result.episodes.map((episode) => episode.id));
@@ -605,6 +710,12 @@ function syncCoordinationState(
   for (const workOrder of result.workOrders) {
     store.upsertWorkOrder(workOrder);
   }
+  for (const episode of result.episodes) {
+    if (episode.status !== "coordinated") continue;
+    for (const conflictId of episode.conflictIds) {
+      store.updateConflictStatus(conflictId, "resolved", createdAt);
+    }
+  }
 }
 
 function relevantCoordinationEpisodesForSession(
@@ -619,6 +730,25 @@ function relevantCoordinationEpisodesForSession(
         episode.status !== "resolved" &&
         episode.affectedAgentSessionIds.includes(sessionId)
     );
+}
+
+function mergeRisksForEpisodes(
+  store: RebaseStore,
+  repoId: string,
+  episodes: CoordinationEpisode[]
+): MergeRiskAssessment[] {
+  const episodeIds = new Set(episodes.map((episode) => episode.id));
+  return store
+    .listLatestMergeRiskAssessments(repoId)
+    .filter((assessment) => episodeIds.has(assessment.episodeId));
+}
+
+function isBlockingMergeRisk(assessment: MergeRiskAssessment): boolean {
+  return (
+    assessment.status === "blocked" ||
+    (!assessment.safe && assessment.risk === "high") ||
+    assessment.predictedConflicts.some((conflict) => conflict.blocking)
+  );
 }
 
 function ensureQueuedDirectionsForSession(
@@ -786,6 +916,147 @@ function isBlockingConflict(conflict: RebaseConflict): boolean {
   );
 }
 
+const ENFORCED_CONTRACT_TERMS = [
+  "label",
+  "project",
+  "subtitle",
+  "reminderAt",
+  "archived",
+  "batchId"
+];
+
+interface WorkOrderEvaluation {
+  workOrder: WorkOrder;
+  satisfied: boolean;
+  missingTerms: string[];
+}
+
+function evaluateWorkOrdersForCheckpoint(input: {
+  store: RebaseStore;
+  repoId: string;
+  session: AgentSession;
+  workOrders: WorkOrder[];
+  coordinationEpisodes: CoordinationEpisode[];
+  evaluatedAt: number;
+}): WorkOrderEvaluation[] {
+  return input.workOrders
+    .filter((workOrder) => workOrder.status !== "completed")
+    .map((workOrder) => {
+      const episode = input.coordinationEpisodes.find(
+        (candidate) => candidate.id === workOrder.episodeId
+      );
+      if (episode && isIntegrationEpisode(input.store, input.repoId, episode)) {
+        input.store.markWorkOrderCompleted(workOrder.id, input.evaluatedAt);
+        return { workOrder, satisfied: true, missingTerms: [] };
+      }
+      const evaluation = evaluateWorkOrder({
+        store: input.store,
+        repoId: input.repoId,
+        session: input.session,
+        workOrder,
+        episode
+      });
+      if (evaluation.satisfied) {
+        input.store.markWorkOrderCompleted(workOrder.id, input.evaluatedAt);
+      }
+      return evaluation;
+    });
+}
+
+function isIntegrationEpisode(
+  store: RebaseStore,
+  repoId: string,
+  episode: CoordinationEpisode
+): boolean {
+  const conflicts = store
+    .listConflicts(repoId)
+    .filter((conflict) => episode.conflictIds.includes(conflict.id));
+  return conflicts.some((conflict) => isIntegrationConflict(store, repoId, conflict));
+}
+
+function evaluateWorkOrder(input: {
+  store: RebaseStore;
+  repoId: string;
+  session: AgentSession;
+  workOrder: WorkOrder;
+  episode?: CoordinationEpisode | undefined;
+}): WorkOrderEvaluation {
+  if (input.workOrder.role === "contract_owner") {
+    const ownerPublished = input.episode
+      ? hasOwnerPublicationForEpisode({
+          store: input.store,
+          repoId: input.repoId,
+          sessionId: input.session.id,
+          episode: input.episode
+        })
+      : false;
+    const satisfied = Boolean(input.episode?.mergeContract || ownerPublished);
+    return {
+      workOrder: input.workOrder,
+      satisfied,
+      missingTerms: satisfied ? [] : ["published contract"]
+    };
+  }
+
+  const requiredTerms = ENFORCED_CONTRACT_TERMS.filter((term) =>
+    input.workOrder.requiredContract?.includes(term)
+  );
+  if (requiredTerms.length === 0) {
+    return { workOrder: input.workOrder, satisfied: true, missingTerms: [] };
+  }
+
+  const evidence = latestFingerprintEvidence({
+    store: input.store,
+    repoId: input.repoId,
+    session: input.session
+  });
+  const missingTerms = requiredTerms.filter((term) => !evidence.includes(term));
+  return {
+    workOrder: input.workOrder,
+    satisfied: missingTerms.length === 0,
+    missingTerms
+  };
+}
+
+function hasOwnerPublicationForEpisode(input: {
+  store: RebaseStore;
+  repoId: string;
+  sessionId: string;
+  episode: CoordinationEpisode;
+}): boolean {
+  const conflictIds = new Set(input.episode.conflictIds);
+  return input.store
+    .listContractPublications(input.repoId)
+    .some(
+      (publication) =>
+        publication.ownerAgentSessionId === input.sessionId &&
+        conflictIds.has(publication.conflictId)
+    );
+}
+
+function latestFingerprintEvidence(input: {
+  store: RebaseStore;
+  repoId: string;
+  session: AgentSession;
+}): string {
+  if (!input.session.worktreeId) return "";
+  const fingerprint = input.store
+    .listFingerprints(input.repoId)
+    .filter((candidate) => candidate.worktreeId === input.session.worktreeId)
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (!fingerprint) return "";
+  return [
+    fingerprint.semanticSummary,
+    ...fingerprint.contractChanges,
+    ...fingerprint.surfaces.flatMap((surface) => [
+      surface.label,
+      ...surface.evidence
+    ]),
+    ...fingerprint.symbols.added,
+    ...fingerprint.symbols.modified
+  ].join("\n");
+}
+
 function activeDecisionBriefsForSession(
   store: RebaseStore,
   repoId: string,
@@ -943,12 +1214,28 @@ function publishContractShape({
   input: PublishContractInput;
   createdAt: number;
 }): ContractPublication {
-  const conflict = store
-    .listConflicts(repoId)
-    .find((candidate) => candidate.id === input.conflictId);
+  const conflict = resolvePublicationConflict({
+    store,
+    repoId,
+    session,
+    input
+  });
   if (!conflict) {
-    throw new Error(`Conflict ${input.conflictId} not found`);
+    const candidates = publicationConflictCandidates({ store, repoId, session });
+    throw new Error(
+      candidates.length > 0
+        ? `Conflict ${input.conflictId ?? "(not provided)"} not found. Active conflict ids for this session: ${candidates
+            .map((candidate) => candidate.id)
+            .join(", ")}.`
+      : `Conflict ${input.conflictId ?? "(not provided)"} not found. No active coordination episode matches this session.`
+    );
   }
+  const episode = publicationEpisodeForConflict({
+    store,
+    repoId,
+    sessionId: session.id,
+    conflictId: conflict.id
+  });
   const decision = store.getActiveConflictDecision(conflict.id);
   if (decision?.ownerAgentSessionId && decision.ownerAgentSessionId !== session.id) {
     throw new Error("Only the assigned contract owner can publish this shape");
@@ -981,6 +1268,7 @@ function publishContractShape({
     store,
     repoId,
     conflict,
+    episode,
     publication,
     ownerSessionId: session.id,
     createdAt
@@ -988,10 +1276,117 @@ function publishContractShape({
   return publication;
 }
 
+function resolvePublicationConflict(input: {
+  store: RebaseStore;
+  repoId: string;
+  session: AgentSession;
+  input: PublishContractInput;
+}): RebaseConflict | undefined {
+  if (input.input.conflictId) {
+    return input.store
+      .listConflicts(input.repoId)
+      .find((candidate) => candidate.id === input.input.conflictId);
+  }
+  const candidates = publicationConflictCandidates(input);
+  const matchingSurface = candidates.filter(
+    (candidate) =>
+      candidate.primarySurface === input.input.surface ||
+      candidate.affectedSurfaces.includes(input.input.surface)
+  );
+  const scoped = matchingSurface.length > 0 ? matchingSurface : candidates;
+  if (scoped.length === 1) return scoped[0];
+
+  const scopedIds = new Set(scoped.map((candidate) => candidate.id));
+  const matchingEpisodes = relevantCoordinationEpisodesForSession(
+    input.store,
+    input.repoId,
+    input.session.id
+  ).filter(
+    (episode) =>
+      (!episode.ownerAgentSessionId ||
+        episode.ownerAgentSessionId === input.session.id) &&
+      episode.conflictIds.some((conflictId) => scopedIds.has(conflictId))
+  );
+  if (matchingEpisodes.length !== 1) return undefined;
+
+  return preferredPublicationConflict({
+    store: input.store,
+    repoId: input.repoId,
+    sessionId: input.session.id,
+    conflicts: scoped.filter((candidate) =>
+      matchingEpisodes[0]?.conflictIds.includes(candidate.id)
+    )
+  });
+}
+
+function preferredPublicationConflict(input: {
+  store: RebaseStore;
+  repoId: string;
+  sessionId: string;
+  conflicts: RebaseConflict[];
+}): RebaseConflict | undefined {
+  const ownedDecisionConflictIds = new Set(
+    input.store
+      .listConflictDecisions(input.repoId)
+      .filter(
+        (decision) =>
+          decision.status === "active" &&
+          decision.ownerAgentSessionId === input.sessionId
+      )
+      .map((decision) => decision.conflictId)
+  );
+  return [...input.conflicts].sort((left, right) => {
+    const leftOwned = ownedDecisionConflictIds.has(left.id) ? 1 : 0;
+    const rightOwned = ownedDecisionConflictIds.has(right.id) ? 1 : 0;
+    return rightOwned - leftOwned || left.id.localeCompare(right.id);
+  })[0];
+}
+
+function publicationEpisodeForConflict(input: {
+  store: RebaseStore;
+  repoId: string;
+  sessionId: string;
+  conflictId: string;
+}): CoordinationEpisode | undefined {
+  return relevantCoordinationEpisodesForSession(
+    input.store,
+    input.repoId,
+    input.sessionId
+  ).find((episode) => episode.conflictIds.includes(input.conflictId));
+}
+
+function publicationConflictCandidates(input: {
+  store: RebaseStore;
+  repoId: string;
+  session: AgentSession;
+}): RebaseConflict[] {
+  const sessionEpisodes = relevantCoordinationEpisodesForSession(
+    input.store,
+    input.repoId,
+    input.session.id
+  ).filter(
+    (episode) =>
+      !episode.ownerAgentSessionId || episode.ownerAgentSessionId === input.session.id
+  );
+  const activeConflictIds = new Set(
+    sessionEpisodes.flatMap((episode) => episode.conflictIds)
+  );
+  return input.store
+    .listConflicts(input.repoId)
+    .filter(
+      (conflict) =>
+        conflict.status === "open" &&
+        activeConflictIds.has(conflict.id) &&
+        (!input.session.worktreeId ||
+          conflict.affectedWorktreeIds.includes(input.session.worktreeId))
+    );
+}
+
 function queuePublicationInterventions({
   store,
   repoId,
   conflict,
+  episode,
   publication,
   ownerSessionId,
   createdAt
@@ -999,17 +1394,23 @@ function queuePublicationInterventions({
   store: RebaseStore;
   repoId: string;
   conflict: RebaseConflict;
+  episode?: CoordinationEpisode | undefined;
   publication: ContractPublication;
   ownerSessionId: string;
   createdAt: number;
 }): Intervention[] {
   const agents = store.listAgentSessions(repoId);
   const fingerprints = store.listFingerprints(repoId);
+  const episodeAgentIds = episode
+    ? new Set(episode.affectedAgentSessionIds)
+    : null;
   const targets = agents.filter(
     (agent) =>
       agent.id !== ownerSessionId &&
       agent.worktreeId !== null &&
-      conflict.affectedWorktreeIds.includes(agent.worktreeId)
+      (episodeAgentIds
+        ? episodeAgentIds.has(agent.id)
+        : conflict.affectedWorktreeIds.includes(agent.worktreeId))
   );
   const interventions = targets.map((agent, index) =>
     buildPublicationIntervention({
@@ -1126,6 +1527,15 @@ function relevantPublicationsForSession(
       (conflict) => conflict.id
     )
   );
+  for (const episode of relevantCoordinationEpisodesForSession(
+    store,
+    repoId,
+    sessionId
+  )) {
+    for (const conflictId of episode.conflictIds) {
+      conflictIds.add(conflictId);
+    }
+  }
   return store
     .listContractPublications(repoId)
     .filter((publication) => conflictIds.has(publication.conflictId));

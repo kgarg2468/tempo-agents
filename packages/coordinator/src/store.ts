@@ -11,6 +11,7 @@ import type {
   Fingerprint,
   HookEvent,
   Intervention,
+  MergeRiskAssessment,
   RebaseConflict,
   RebaseEvent,
   RebaseGraphEdge,
@@ -34,6 +35,7 @@ import {
   graphNodeSchema,
   hookEventSchema,
   interventionSchema,
+  mergeRiskAssessmentSchema,
   repoSchema,
   workOrderSchema,
   worktreeSchema
@@ -69,11 +71,16 @@ export interface RebaseStore {
   updateConflictStatus(id: string, status: ConflictStatus, updatedAt: number): void;
   upsertCoordinationEpisode(episode: CoordinationEpisode): void;
   listCoordinationEpisodes(repoId: string): CoordinationEpisode[];
+  upsertMergeRiskAssessment(assessment: MergeRiskAssessment): void;
+  listMergeRiskAssessments(repoId: string): MergeRiskAssessment[];
+  listLatestMergeRiskAssessments(repoId: string): MergeRiskAssessment[];
   upsertWorkOrder(workOrder: WorkOrder): void;
   listWorkOrders(repoId: string): WorkOrder[];
   listQueuedWorkOrders(repoId: string, agentSessionId: string): WorkOrder[];
+  listActiveWorkOrders(repoId: string, agentSessionId: string): WorkOrder[];
   markWorkOrderFetched(id: string, fetchedAt: number): void;
   markWorkOrderAcknowledged(id: string, acknowledgedAt: number): void;
+  markWorkOrderCompleted(id: string, completedAt: number): void;
   upsertConflictDecision(decision: ConflictDecision): void;
   getActiveConflictDecision(conflictId: string): ConflictDecision | null;
   listConflictDecisions(repoId: string): ConflictDecision[];
@@ -609,6 +616,78 @@ class BetterSqliteRebaseStore implements RebaseStore {
     );
   }
 
+  upsertMergeRiskAssessment(assessment: MergeRiskAssessment): void {
+    const parsed = mergeRiskAssessmentSchema.parse(assessment);
+    this.db
+      .prepare(
+        `
+        insert into merge_risk_assessments (
+          id, repo_id, episode_id, status, risk, safe, diff_hash,
+          rocket_ride_run_id, predicted_conflicts_json, warnings_json,
+          required_work_orders_json, evidence_json, created_at
+        )
+        values (
+          @id, @repoId, @episodeId, @status, @risk, @safe, @diffHash,
+          @rocketRideRunId, @predictedConflictsJson, @warningsJson,
+          @requiredWorkOrdersJson, @evidenceJson, @createdAt
+        )
+        on conflict(id) do update set
+          status = excluded.status,
+          risk = excluded.risk,
+          safe = excluded.safe,
+          rocket_ride_run_id = excluded.rocket_ride_run_id,
+          predicted_conflicts_json = excluded.predicted_conflicts_json,
+          warnings_json = excluded.warnings_json,
+          required_work_orders_json = excluded.required_work_orders_json,
+          evidence_json = excluded.evidence_json
+      `
+      )
+      .run({
+        ...parsed,
+        safe: parsed.safe ? 1 : 0,
+        rocketRideRunId: parsed.rocketRideRunId ?? null,
+        predictedConflictsJson: JSON.stringify(parsed.predictedConflicts),
+        warningsJson: JSON.stringify(parsed.warnings),
+        requiredWorkOrdersJson: JSON.stringify(parsed.requiredWorkOrders),
+        evidenceJson: JSON.stringify(parsed.evidence)
+      });
+  }
+
+  listMergeRiskAssessments(repoId: string): MergeRiskAssessment[] {
+    const rows = this.db
+      .prepare(
+        "select * from merge_risk_assessments where repo_id = ? order by created_at desc"
+      )
+      .all(repoId) as MergeRiskAssessmentRow[];
+    return rows.map((row) =>
+      mergeRiskAssessmentSchema.parse(mergeRiskAssessmentFromRow(row))
+    );
+  }
+
+  listLatestMergeRiskAssessments(repoId: string): MergeRiskAssessment[] {
+    const rows = this.db
+      .prepare(
+        `
+        select mra.*
+        from merge_risk_assessments mra
+        join (
+          select episode_id, max(created_at) as created_at
+          from merge_risk_assessments
+          where repo_id = ?
+          group by episode_id
+        ) latest
+          on latest.episode_id = mra.episode_id
+         and latest.created_at = mra.created_at
+        where mra.repo_id = ?
+        order by mra.created_at desc
+      `
+      )
+      .all(repoId, repoId) as MergeRiskAssessmentRow[];
+    return rows.map((row) =>
+      mergeRiskAssessmentSchema.parse(mergeRiskAssessmentFromRow(row))
+    );
+  }
+
   upsertWorkOrder(workOrder: WorkOrder): void {
     const parsed = workOrderSchema.parse(workOrder);
     this.db
@@ -652,6 +731,25 @@ class BetterSqliteRebaseStore implements RebaseStore {
         deliveredAt: parsed.deliveredAt ?? null,
         acknowledgedAt: parsed.acknowledgedAt ?? null
       });
+    this.db
+      .prepare(
+        `
+        update work_orders
+        set status = 'superseded', updated_at = ?
+        where repo_id = ?
+          and episode_id = ?
+          and agent_session_id = ?
+          and revision < ?
+          and status in ('queued', 'active', 'fetched', 'acknowledged')
+      `
+      )
+      .run(
+        parsed.updatedAt,
+        parsed.repoId,
+        parsed.episodeId,
+        parsed.agentSessionId,
+        parsed.revision
+      );
   }
 
   listWorkOrders(repoId: string): WorkOrder[] {
@@ -670,6 +768,15 @@ class BetterSqliteRebaseStore implements RebaseStore {
     return rows.map((row) => workOrderSchema.parse(workOrderFromRow(row)));
   }
 
+  listActiveWorkOrders(repoId: string, agentSessionId: string): WorkOrder[] {
+    const rows = this.db
+      .prepare(
+        "select * from work_orders where repo_id = ? and agent_session_id = ? and status in ('fetched', 'acknowledged') order by updated_at desc"
+      )
+      .all(repoId, agentSessionId) as WorkOrderRow[];
+    return rows.map((row) => workOrderSchema.parse(workOrderFromRow(row)));
+  }
+
   markWorkOrderFetched(id: string, fetchedAt: number): void {
     this.db
       .prepare("update work_orders set status = 'fetched', delivered_at = ? where id = ?")
@@ -682,6 +789,12 @@ class BetterSqliteRebaseStore implements RebaseStore {
         "update work_orders set status = 'acknowledged', acknowledged_at = ? where id = ?"
       )
       .run(acknowledgedAt, id);
+  }
+
+  markWorkOrderCompleted(id: string, completedAt: number): void {
+    this.db
+      .prepare("update work_orders set status = 'completed', updated_at = ? where id = ?")
+      .run(completedAt, id);
   }
 
   upsertConflictDecision(decision: ConflictDecision): void {
@@ -1001,6 +1114,22 @@ function migrate(db: Database.Database): void {
       updated_at integer not null,
       delivered_at integer,
       acknowledged_at integer
+    );
+
+    create table if not exists merge_risk_assessments (
+      id text primary key,
+      repo_id text not null,
+      episode_id text not null,
+      status text not null,
+      risk text not null,
+      safe integer not null,
+      diff_hash text not null,
+      rocket_ride_run_id text,
+      predicted_conflicts_json text not null,
+      warnings_json text not null,
+      required_work_orders_json text not null,
+      evidence_json text not null,
+      created_at integer not null
     );
 
     create table if not exists advisories (
@@ -1485,6 +1614,22 @@ interface WorkOrderRow {
   acknowledged_at: number | null;
 }
 
+interface MergeRiskAssessmentRow {
+  id: string;
+  repo_id: string;
+  episode_id: string;
+  status: MergeRiskAssessment["status"];
+  risk: MergeRiskAssessment["risk"];
+  safe: number;
+  diff_hash: string;
+  rocket_ride_run_id: string | null;
+  predicted_conflicts_json: string;
+  warnings_json: string;
+  required_work_orders_json: string;
+  evidence_json: string;
+  created_at: number;
+}
+
 function conflictFromRow(row: ConflictRow): RebaseConflict {
   return {
     id: row.id,
@@ -1573,6 +1718,30 @@ function workOrderFromRow(row: WorkOrderRow): WorkOrder {
     updatedAt: row.updated_at,
     ...(row.delivered_at ? { deliveredAt: row.delivered_at } : {}),
     ...(row.acknowledged_at ? { acknowledgedAt: row.acknowledged_at } : {})
+  };
+}
+
+function mergeRiskAssessmentFromRow(
+  row: MergeRiskAssessmentRow
+): MergeRiskAssessment {
+  return {
+    id: row.id,
+    repoId: row.repo_id,
+    episodeId: row.episode_id,
+    status: row.status,
+    risk: row.risk,
+    safe: Boolean(row.safe),
+    diffHash: row.diff_hash,
+    ...(row.rocket_ride_run_id
+      ? { rocketRideRunId: row.rocket_ride_run_id }
+      : {}),
+    predictedConflicts: JSON.parse(
+      row.predicted_conflicts_json
+    ) as MergeRiskAssessment["predictedConflicts"],
+    warnings: JSON.parse(row.warnings_json) as string[],
+    requiredWorkOrders: JSON.parse(row.required_work_orders_json) as string[],
+    evidence: JSON.parse(row.evidence_json) as MergeRiskAssessment["evidence"],
+    createdAt: row.created_at
   };
 }
 
