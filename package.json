@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "rebase": "pnpm --filter rebase-ai exec node dist/index.js"
+    "rebase": "node packages/cli/dist/index.js"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
