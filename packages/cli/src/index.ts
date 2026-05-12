@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
+import { createServer } from "node:net";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -33,6 +34,10 @@ async function main() {
     await runRocketRideSync(rawArgs.slice(1));
     return;
   }
+  if (command === "mcp") {
+    await runMcpFallback(rawArgs.slice(1));
+    return;
+  }
   if (command !== "start") {
     throw new Error(`Unknown Rebase command: ${command}`);
   }
@@ -45,7 +50,58 @@ async function runRocketRideSync(args: string[]) {
     ...(rocketRideServerDir ? { rocketRideServerDir } : {})
   });
   console.log(`Synced Rebase RocketRide node to ${result.targetDir}`);
+  if (result.runtimeTargetDir) {
+    console.log(`Synced runnable RocketRide node to ${result.runtimeTargetDir}`);
+  }
   console.log(`Files: ${result.filesCopied.join(", ")}`);
+}
+
+async function runMcpFallback(args: string[]) {
+  const tool = args[0];
+  if (!tool) {
+    throw new Error(
+      "Usage: rebase mcp <checkpoint|wait-for-direction|fetch-intervention|record-decision|session-state> --json '<payload>'"
+    );
+  }
+  const endpoint = mcpFallbackEndpoint(tool);
+  const runtime = await readRuntimeState(process.cwd());
+  if (!runtime) {
+    throw new Error("Rebase is not initialized in this repo. Run `rebase init`.");
+  }
+  await loadRebaseEnv(runtime.envPath);
+  const payloadText = valueArg(args, "--json") ?? "{}";
+  const payload = JSON.parse(payloadText) as unknown;
+  const response = await fetch(`${runtime.coordinatorUrl}${endpoint}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${process.env.REBASE_LOCAL_TOKEN ?? runtime.token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Rebase MCP fallback ${tool} failed: ${response.status} ${text}`);
+  }
+  console.log(JSON.stringify(JSON.parse(text), null, 2));
+}
+
+function mcpFallbackEndpoint(tool: string): string {
+  const endpoints: Record<string, string> = {
+    join: "/api/mcp/join",
+    plan: "/api/mcp/plan",
+    checkpoint: "/api/mcp/checkpoint",
+    "fetch-intervention": "/api/mcp/fetch-intervention",
+    "wait-for-direction": "/api/mcp/wait-for-direction",
+    "record-decision": "/api/mcp/record-decision",
+    "acknowledge-intervention": "/api/mcp/acknowledge-intervention",
+    "session-state": "/api/mcp/session-state"
+  };
+  const endpoint = endpoints[tool];
+  if (!endpoint) {
+    throw new Error(`Unknown Rebase MCP fallback tool: ${tool}`);
+  }
+  return endpoint;
 }
 
 async function runStart(args: Set<string>) {
@@ -61,6 +117,7 @@ async function runStart(args: Set<string>) {
     cwd: process.cwd(),
     prompts
   });
+  await loadRebaseEnv(path.join(runtime.repoRoot, ".env"));
   await loadRebaseEnv(runtime.envPath);
   const rocketRide = await checkRocketRideRuntime({
     rocketRideUri: runtime.rocketRideUri
@@ -104,11 +161,16 @@ async function runStart(args: Set<string>) {
   console.log(
     `RocketRide: ${rocketRide.ok ? "online" : "offline"} (${runtime.rocketRideUri})`
   );
-  let dashboardProcess: ReturnType<typeof spawn> | null = null;
+  let dashboard: StartedDashboard | null = null;
   if (!noDashboard) {
-    dashboardProcess = await startDashboard(runtime);
-    if (dashboardProcess) {
-      console.log(`Rebase dashboard: ${runtime.dashboardUrl}`);
+    dashboard = await startDashboard(runtime);
+    if (dashboard) {
+      console.log(`Rebase dashboard: ${dashboard.url}`);
+      if (dashboard.port !== runtime.dashboardPort) {
+        console.log(
+          `Dashboard port ${runtime.dashboardPort} was occupied; using ${dashboard.port}.`
+        );
+      }
     } else {
       console.log("Rebase dashboard: run `pnpm --filter @rebase/dashboard dev` from the Rebase repo.");
     }
@@ -120,14 +182,14 @@ async function runStart(args: Set<string>) {
   console.log(`Set REBASE_LOCAL_TOKEN=${runtime.token}`);
 
   if (!noOpen) {
-    const url = dashboardProcess ? runtime.dashboardUrl : runtime.coordinatorUrl;
+    const url = dashboard ? dashboard.url : runtime.coordinatorUrl;
     openBrowser(url).catch(() => {
       console.log(`Open ${url} in your browser.`);
     });
   }
 
   const shutdown = async () => {
-    dashboardProcess?.kill("SIGTERM");
+    dashboard?.process.kill("SIGTERM");
     await app.close();
     process.exit(0);
   };
@@ -200,9 +262,10 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 async function startDashboard(
   runtime: RebaseRuntime
-): Promise<ReturnType<typeof spawn> | null> {
+): Promise<StartedDashboard | null> {
   const dashboardDir = await findDashboardDir();
   if (!dashboardDir) return null;
+  const port = await findAvailablePort(runtime.dashboardPort);
   const child = spawn(
     "pnpm",
     [
@@ -214,7 +277,7 @@ async function startDashboard(
       "--hostname",
       "127.0.0.1",
       "--port",
-      String(runtime.dashboardPort)
+      String(port)
     ],
     {
       env: {
@@ -226,7 +289,37 @@ async function startDashboard(
       stdio: "inherit"
     }
   );
-  return child;
+  return {
+    process: child,
+    port,
+    url: `http://127.0.0.1:${port}`
+  };
+}
+
+interface StartedDashboard {
+  process: ReturnType<typeof spawn>;
+  port: number;
+  url: string;
+}
+
+async function findAvailablePort(startPort: number): Promise<number> {
+  for (let port = startPort; port < startPort + 20; port += 1) {
+    if (await isPortAvailable(port)) return port;
+  }
+  throw new Error(
+    `No dashboard port available from ${startPort} to ${startPort + 19}.`
+  );
+}
+
+async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer()
+      .once("error", () => resolve(false))
+      .once("listening", () => {
+        server.close(() => resolve(true));
+      });
+    server.listen({ host: "127.0.0.1", port });
+  });
 }
 
 async function findDashboardDir(): Promise<string | null> {

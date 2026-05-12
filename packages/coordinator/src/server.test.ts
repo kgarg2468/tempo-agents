@@ -935,6 +935,38 @@ describe("coordinator server", () => {
     );
   });
 
+  it("exposes session-state through the token-protected MCP fallback route", async () => {
+    const repoRoot = await createRepo();
+    const app = await createCoordinatorApp({
+      repoRoot,
+      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      token: "test-token",
+      startWatcher: false
+    });
+    apps.push(app);
+    app.rebase.store.upsertAgentSession({
+      id: "agent-1",
+      repoId: app.rebase.repoId,
+      worktreeId: "wt-1",
+      agentKind: "codex",
+      coordinationRole: "feature",
+      cwd: "/agent",
+      displayName: "agent",
+      lastCheckpointAt: 1778000000000,
+      joinedAt: 1778000000000
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/mcp/session-state",
+      headers: { authorization: "Bearer test-token" },
+      payload: { sessionId: "agent-1" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().session.id).toBe("agent-1");
+  });
+
   it("exposes predictive merge-risk evidence for dashboard consumers", async () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({

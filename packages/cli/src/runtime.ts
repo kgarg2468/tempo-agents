@@ -27,6 +27,7 @@ const REBASE_AGENTS_BLOCK = [
   "- if `rebase_wait_for_direction` returns `workOrders`, acknowledge the assigned role in the chat and follow that work order before continuing",
   "- when Rebase returns `directions`, present the role and plan to the user, call `rebase_acknowledge_intervention`, then continue from that direction",
   "- if the user chooses split ownership in this chat, call `rebase_record_decision`; this session becomes the owner unless the user names a different owner",
+  "- if Rebase MCP tools return `unsupported call`, use the token-auth shell fallback, for example `rebase mcp checkpoint --json '{\"sessionId\":\"...\"}'` or `rebase mcp wait-for-direction --json '{\"sessionId\":\"...\",\"timeoutMs\":3000}'`",
   "- do not add external context providers without an ADR and explicit Krish approval",
   "",
   "<!-- END REBASE -->",
@@ -139,6 +140,7 @@ export async function readRuntimeState(cwd: string): Promise<RebaseRuntime | nul
 export interface RocketRideRuntimeCheckInput {
   rocketRideUri?: string | undefined;
   apiKey?: string | undefined;
+  timeoutMs?: number | undefined;
   fetchImpl?: FetchLike | undefined;
   clientFactory?: RocketRideClientFactory | undefined;
 }
@@ -171,19 +173,40 @@ export async function checkRocketRideRuntime(
     input.rocketRideUri ?? process.env.ROCKETRIDE_URI ?? DEFAULT_ROCKETRIDE_URI
   );
   const apiKey = input.apiKey ?? process.env.ROCKETRIDE_APIKEY;
+  const timeoutMs = input.timeoutMs ?? 3_000;
   let sdkCheck: RocketRideRuntimeCheck | null = null;
   if (apiKey) {
-    sdkCheck = await checkRocketRideWithSdk({
-      uri,
-      apiKey,
-      clientFactory: input.clientFactory
-    });
+    sdkCheck = await withTimeout(
+      checkRocketRideWithSdk({
+        uri,
+        apiKey,
+        clientFactory: input.clientFactory
+      }),
+      timeoutMs,
+      {
+        ok: false,
+        uri,
+        message: `RocketRide SDK ping timed out at ${uri}. Start RocketRide locally or set ROCKETRIDE_URI.`
+      }
+    );
     if (sdkCheck.ok) return sdkCheck;
   }
 
   const fetchImpl = input.fetchImpl ?? fetch;
   try {
-    const response = await fetchImpl(`${uri}/health`, { method: "GET" });
+    const response = await withTimeout(
+      fetchImpl(`${uri}/health`, { method: "GET" }),
+      timeoutMs,
+      null
+    );
+    if (!response) {
+      if (sdkCheck) return sdkCheck;
+      return {
+        ok: false,
+        uri,
+        message: `RocketRide preflight timed out at ${uri}/health. Start RocketRide locally or set ROCKETRIDE_URI.`
+      };
+    }
     if (response.ok) {
       return {
         ok: true,
@@ -206,6 +229,19 @@ export async function checkRocketRideRuntime(
       message: `RocketRide is offline at ${uri}. Start RocketRide locally or set ROCKETRIDE_URI.`
     };
   }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutValue: T
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => {
+      setTimeout(() => resolve(timeoutValue), timeoutMs);
+    })
+  ]);
 }
 
 async function checkRocketRideWithSdk(input: {
@@ -341,7 +377,19 @@ async function ensureLine(filePath: string, line: string): Promise<void> {
 
 async function ensureRebaseAgentsBlock(filePath: string): Promise<void> {
   const current = await readOptional(filePath);
-  if (current.includes("BEGIN REBASE")) return;
+  const begin = "<!-- BEGIN REBASE -->";
+  const end = "<!-- END REBASE -->";
+  const beginIndex = current.indexOf(begin);
+  const endIndex = current.indexOf(end);
+  if (beginIndex !== -1 && endIndex !== -1 && endIndex > beginIndex) {
+    const before = current.slice(0, beginIndex).trimEnd();
+    const after = current.slice(endIndex + end.length).trimStart();
+    const next = [before, REBASE_AGENTS_BLOCK.trimEnd(), after]
+      .filter(Boolean)
+      .join("\n\n");
+    await writeFile(filePath, `${next}\n`);
+    return;
+  }
   const separator = current.trim().length > 0 ? "\n\n" : "";
   await writeFile(filePath, `${current.trimEnd()}${separator}${REBASE_AGENTS_BLOCK}`);
 }

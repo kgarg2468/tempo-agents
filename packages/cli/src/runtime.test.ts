@@ -72,6 +72,7 @@ describe("prepareRuntime", () => {
     expect(agents).toContain("if `rebase_wait_for_direction` times out with `keepWaiting: true`");
     expect(agents).toContain("call `rebase_acknowledge_intervention`");
     expect(agents).toContain("rely on Rebase hooks");
+    expect(agents).toContain("rebase mcp checkpoint --json");
     await expect(readFile(path.join(repo, ".rebaseignore"), "utf8")).resolves.toContain(
       "Rebase privacy ignore"
     );
@@ -104,6 +105,32 @@ describe("prepareRuntime", () => {
     expect(env.OPENAI_API_KEY).toBe("from-shell");
     expect(env.OPENAI_MODEL).toBe("gpt-5.4-mini");
     expect(env.REBASE_LOCAL_TOKEN).toBe("from-file");
+  });
+
+  it("loads project .env before .rebase env so project OpenAI keys are usable", async () => {
+    const repo = await createRepo();
+    const runtime = await prepareRuntime({
+      cwd: repo,
+      prompts: {
+        updateGitignore: false,
+        updateAgents: false
+      }
+    });
+    await writeFile(
+      path.join(repo, ".env"),
+      ["OPENAI_API_KEY=from-project", "OPENAI_MODEL=gpt-5.4-mini", ""].join("\n")
+    );
+    await writeFile(
+      runtime.envPath,
+      ["OPENAI_API_KEY=from-runtime", "REBASE_LOCAL_TOKEN=from-runtime", ""].join("\n")
+    );
+    const env: Record<string, string | undefined> = {};
+
+    await loadRebaseEnv(path.join(repo, ".env"), env);
+    await loadRebaseEnv(runtime.envPath, env);
+
+    expect(env.OPENAI_API_KEY).toBe("from-project");
+    expect(env.REBASE_LOCAL_TOKEN).toBe("from-runtime");
   });
 
   it("reads existing runtime state without starting the coordinator", async () => {
@@ -177,5 +204,32 @@ describe("prepareRuntime", () => {
     expect(result.ok).toBe(true);
     expect(result.message).toContain("SDK ping succeeded");
     expect(calls).toEqual(["connect", "ping", "disconnect"]);
+  });
+
+  it("fails closed quickly when the RocketRide SDK connection hangs", async () => {
+    const result = await checkRocketRideRuntime({
+      rocketRideUri: "http://127.0.0.1:5599",
+      apiKey: "rr-local",
+      timeoutMs: 5,
+      clientFactory: () => ({
+        async connect() {
+          await new Promise(() => undefined);
+        },
+        async ping() {
+          throw new Error("unreachable");
+        },
+        async disconnect() {}
+      }),
+      fetchImpl: async () => {
+        return await new Promise(() => undefined);
+      }
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      uri: "http://127.0.0.1:5599",
+      message:
+        "RocketRide SDK ping timed out at http://127.0.0.1:5599. Start RocketRide locally or set ROCKETRIDE_URI."
+    });
   });
 });

@@ -453,6 +453,15 @@ export async function createCoordinatorApp(
   );
 
   app.post(
+    "/api/mcp/session-state",
+    { preHandler: tokenAuth },
+    async (request) =>
+      mcpHandlers.sessionState(
+        request.body as Parameters<typeof mcpHandlers.sessionState>[0]
+      )
+  );
+
+  app.post(
     "/api/mcp/checkpoint",
     { preHandler: tokenAuth },
     async (request) =>
