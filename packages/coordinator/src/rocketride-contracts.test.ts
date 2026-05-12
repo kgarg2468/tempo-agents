@@ -71,6 +71,47 @@ describe("RocketRide typed output contracts", () => {
     expect(output.mergeRisk.requiredWorkOrders).toEqual(["work-order-agent-b-r1"]);
   });
 
+  it("parses an OpenAI coordination plan from work-order output", () => {
+    const output = parseWorkOrderRunOutput({
+      response: JSON.stringify({
+        episodes: [episode("episode-1", ["rr-work-order"])],
+        workOrders: [
+          {
+            id: "work-order-integration",
+            repoId: "repo-1",
+            episodeId: "episode-1",
+            agentSessionId: "agent-a",
+            role: "integration_owner",
+            status: "queued",
+            revision: 1,
+            title: "Integrate Task files",
+            summary: "Converge overlapping files to the OpenAI plan.",
+            requiredContract: "Task contains labels, reminders, and bulk fields.",
+            allowedFiles: ["src/shared/task.ts"],
+            blockedFiles: [],
+            sharedFiles: ["src/shared/task.ts"],
+            nextCheckpoint: "Checkpoint after same-hunk blockers are gone.",
+            createdAt: 1778000000000,
+            updatedAt: 1778000000000
+          }
+        ],
+        coordinationPlan: {
+          source: "openai",
+          strategy: "split_ownership",
+          rationale: "OpenAI selected an integration owner for overlapping files.",
+          ownerAgentSessionId: "agent-a",
+          integrationOwnerAgentSessionId: "agent-a",
+          workOrderIds: ["work-order-integration"],
+          requiredTerms: ["Task.label is required"],
+          validationChecklist: ["No same-hunk blockers remain"]
+        }
+      })
+    });
+
+    expect(output.coordinationPlan?.source).toBe("openai");
+    expect(output.workOrders[0]?.role).toBe("integration_owner");
+  });
+
   it("rejects the old merge-risk placeholder shape", () => {
     expect(() =>
       parseMergeRiskRunOutput({

@@ -14,6 +14,10 @@ export interface RocketRideStatus {
   pipelineStatus: "unknown" | "validated" | "failed" | "disabled";
   authoritative: boolean;
   message: string;
+  openAiPlanner?: {
+    configured: boolean;
+    validated: boolean;
+  } | undefined;
   lastError?: string | undefined;
 }
 

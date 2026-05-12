@@ -54,6 +54,10 @@ class CliRocketRideRunner implements RocketRideCoordinator {
           const pipelineConfig = unwrapPipelineConfig(config);
           assertExecutablePipeline(pipelinePath, pipelineConfig);
           try {
+            const smokeInput = smokeInputForPipeline(pipeline);
+            if (pipeline === "rebase-work-order" && process.env.OPENAI_API_KEY) {
+              smokeInput.plannerMode = "required";
+            }
             await client.validate({ pipeline: pipelineConfig });
             const { token } = await client.use({
               filepath: pipelinePath,
@@ -63,7 +67,7 @@ class CliRocketRideRunner implements RocketRideCoordinator {
             try {
               const output = await client.send(
                 token,
-                JSON.stringify(smokeInputForPipeline(pipeline)),
+                JSON.stringify(smokeInput),
                 { name: `${pipeline}.smoke.json` },
                 "text/plain"
               );
@@ -82,7 +86,11 @@ class CliRocketRideRunner implements RocketRideCoordinator {
         uri: this.input.uri,
         pipelineStatus: "validated",
         authoritative: true,
-        message: "RocketRide pipelines validated."
+        message: "RocketRide pipelines validated.",
+        openAiPlanner: {
+          configured: Boolean(process.env.OPENAI_API_KEY),
+          validated: Boolean(process.env.OPENAI_API_KEY)
+        }
       };
     } catch (error) {
       this.lastStatus = {
@@ -92,6 +100,10 @@ class CliRocketRideRunner implements RocketRideCoordinator {
         pipelineStatus: "failed",
         authoritative: false,
         message: "RocketRide pipeline validation failed.",
+        openAiPlanner: {
+          configured: Boolean(process.env.OPENAI_API_KEY),
+          validated: false
+        },
         lastError: error instanceof Error ? error.message : String(error)
       };
     }

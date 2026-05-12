@@ -10,6 +10,7 @@ export interface SyncRebaseRocketRideNodeInput {
 export interface SyncRebaseRocketRideNodeResult {
   sourceDir: string;
   targetDir: string;
+  runtimeTargetDir?: string | undefined;
   filesCopied: string[];
 }
 
@@ -40,7 +41,12 @@ export async function syncRebaseRocketRideNode(
   await rm(targetDir, { force: true, recursive: true });
   await cp(sourceDir, targetDir, { recursive: true });
 
-  return { sourceDir, targetDir, filesCopied };
+  const runtimeTargetDir = await syncRuntimeNodeIfPresent(
+    sourceDir,
+    rocketRideServerDir
+  );
+
+  return { sourceDir, targetDir, runtimeTargetDir, filesCopied };
 }
 
 export function defaultRebaseRocketRideNodeDir(): string {
@@ -66,4 +72,23 @@ async function listTopLevelFiles(dir: string): Promise<string[]> {
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
     .sort();
+}
+
+async function syncRuntimeNodeIfPresent(
+  sourceDir: string,
+  rocketRideServerDir: string
+): Promise<string | undefined> {
+  const runtimeNodesDir = path.join(rocketRideServerDir, "dist", "server", "nodes");
+  try {
+    const info = await stat(runtimeNodesDir);
+    if (!info.isDirectory()) return undefined;
+  } catch (_error) {
+    return undefined;
+  }
+
+  const targetDir = path.join(runtimeNodesDir, NODE_NAME);
+  await mkdir(path.dirname(targetDir), { recursive: true });
+  await rm(targetDir, { force: true, recursive: true });
+  await cp(sourceDir, targetDir, { recursive: true });
+  return targetDir;
 }

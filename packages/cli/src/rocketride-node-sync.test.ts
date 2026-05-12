@@ -10,7 +10,9 @@ describe("syncRebaseRocketRideNode", () => {
     const root = await mkdtemp(path.join(tmpdir(), "rebase-node-sync-"));
     const sourceDir = path.join(root, "rocketride", "nodes", "rebase_coordination");
     const serverDir = path.join(root, "rocketride-server");
+    const runtimeNodesDir = path.join(serverDir, "dist", "server", "nodes");
     await mkdir(sourceDir, { recursive: true });
+    await mkdir(runtimeNodesDir, { recursive: true });
     await writeFile(path.join(sourceDir, "logic.py"), "VALUE = 'rebase'\n");
     await writeFile(path.join(sourceDir, "services.json"), "{\"name\":\"rebase\"}\n");
 
@@ -32,8 +34,17 @@ describe("syncRebaseRocketRideNode", () => {
         "utf8"
       )
     ).resolves.toBe("VALUE = 'rebase'\n");
+    await expect(
+      readFile(
+        path.join(runtimeNodesDir, "rebase_coordination", "logic.py"),
+        "utf8"
+      )
+    ).resolves.toBe("VALUE = 'rebase'\n");
     expect(result.targetDir).toBe(
       path.join(serverDir, "nodes", "src", "nodes", "rebase_coordination")
+    );
+    expect(result.runtimeTargetDir).toBe(
+      path.join(runtimeNodesDir, "rebase_coordination")
     );
     expect(result.filesCopied).toEqual(["logic.py", "services.json"]);
   });

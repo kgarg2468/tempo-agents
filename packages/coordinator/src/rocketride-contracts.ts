@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   conflictSchema,
+  coordinationPlanSchema,
   coordinationEpisodeSchema,
   fingerprintSchema,
   mergeRiskAssessmentSchema,
@@ -8,6 +9,7 @@ import {
 } from "@rebase/shared";
 import type {
   CoordinationEpisode,
+  CoordinationPlan,
   Fingerprint,
   RebaseConflict,
   WorkOrder
@@ -25,7 +27,8 @@ export const collisionRunOutputSchema = z.object({
 
 export const workOrderRunOutputSchema = z.object({
   episodes: z.array(coordinationEpisodeSchema),
-  workOrders: z.array(workOrderSchema)
+  workOrders: z.array(workOrderSchema),
+  coordinationPlan: coordinationPlanSchema.optional()
 });
 
 export const mergeRiskRunOutputSchema = z.object({
@@ -44,6 +47,7 @@ export interface CollisionRunOutput {
 export interface WorkOrderRunOutput {
   episodes: CoordinationEpisode[];
   workOrders: WorkOrder[];
+  coordinationPlan?: CoordinationPlan | undefined;
 }
 
 export type MergeRiskRunOutput = z.infer<typeof mergeRiskRunOutputSchema>;
