@@ -41,7 +41,8 @@ of truth even when an agent has not joined through MCP.
 | --- | --- | --- |
 | **CLI** | Node.js - TypeScript - pnpm workspace | Supports `rebase init`, `rebase`, and `rebase status`; prepares `.rebase/`, hook scripts, repo-local env, dashboard, and Codex MCP setup details. |
 | **Coordinator** | Fastify - SQLite - Drizzle - Chokidar - MCP SDK | Owns the local runtime API, worktree watcher, fingerprint store, conflict lifecycle, intervention delivery, and MCP tool handlers. |
-| **Analyzer** | Git diff normalization - AST-lite extractors - OpenAI optional enrichment | Turns live changes into bounded fingerprints with touched files, symbols, contract surfaces, semantic summaries, and risk evidence. |
+| **RocketRide** | Local pipeline runtime - Rebase coordination node | Executes required fingerprint, collision, work-order, and merge-risk pipelines; the work-order pipeline can call OpenAI for dynamic coordination plans. |
+| **Analyzer** | Git diff normalization - AST-lite extractors - RocketRide-required execution | Turns live changes into bounded fingerprints with touched files, symbols, contract surfaces, semantic summaries, and risk evidence. |
 | **Dashboard** | Next.js - React - lucide-react - @xyflow/react | Operator console for sessions, agents, conflicts, interventions, evals, and local settings. |
 | **Shared Schemas** | Zod - TypeScript | Defines repo, worktree, session, evidence packet, graph, conflict, debate, advisory, intervention, decision, and publication contracts. |
 | **Evals** | Vitest fixtures - coordinator conflict engine | Measures conflict detection recall, false-positive rate, and latency on synthetic multi-agent fixtures. |
@@ -131,6 +132,17 @@ on blocking risk.
 | `rebase_record_decision` | Record a user-approved conflict choice and queue complementary directions. |
 | `rebase_acknowledge_intervention` | Mark a fetched direction as acknowledged after the agent presents its plan. |
 
+If a resumed Codex CLI session loses the MCP tool surface and reports
+`unsupported call`, use the token-protected shell fallback from the target repo:
+
+```bash
+rebase mcp checkpoint --json '{"sessionId":"..."}'
+rebase mcp wait-for-direction --json '{"sessionId":"...","timeoutMs":3000}'
+rebase mcp fetch-intervention --json '{"sessionId":"..."}'
+rebase mcp record-decision --json '{"conflictId":"...","selectedOptionId":"split-ownership","selectedOptionTitle":"Split ownership","selectedOptionDirection":"...","createdBy":"agent"}'
+rebase mcp session-state --json '{"sessionId":"..."}'
+```
+
 ## Key Endpoints
 
 ```text
@@ -162,6 +174,7 @@ POST /api/hooks/codex                -> ingest Codex hook event and evidence pac
 
 POST /api/mcp/join                   -> HTTP wrapper for rebase_join
 POST /api/mcp/plan                   -> HTTP wrapper for rebase_plan
+POST /api/mcp/session-state          -> HTTP wrapper for rebase_session_state
 POST /api/mcp/checkpoint             -> HTTP wrapper for rebase_checkpoint
 POST /api/mcp/fetch-intervention     -> HTTP wrapper for rebase_fetch_intervention
 POST /api/mcp/wait-for-direction     -> HTTP wrapper for rebase_wait_for_direction
@@ -218,19 +231,37 @@ export REBASE_LOCAL_TOKEN=<token from .rebase/runtime.json>
 
 ## Required Environment
 
-Rebase can run with heuristic-only analysis. OpenAI is optional and enables richer
-fingerprint summaries and compatibility classification.
+Rebase uses RocketRide as the required coordination execution layer. In normal
+mode, startup fails closed unless RocketRide is online, the Rebase coordination
+node is installed, and all required pipelines execute typed smoke inputs.
+Heuristic-only behavior is available only through `--skip-rocketride` for local
+coordinator development.
 
-Repo-local env vars are loaded from the target repo's `.rebase/.env` file when
-`rebase` starts:
+Install or refresh the Rebase RocketRide node into a local RocketRide server:
+
+```bash
+ROCKETRIDE_SERVER_DIR=/path/to/rocketride-server pnpm rebase rocketride:sync
+```
+
+OpenAI is used by the RocketRide `rebase-work-order` pipeline when a key is
+configured. The key lets Rebase reason across agent prompts, fingerprints, diffs,
+existing contracts, and work orders to create a coordination plan. The hard
+merge-risk gate remains deterministic: same-hunk or delete/edit overlap stays
+blocking until the final file text is aligned or an integration work order
+resolves it.
+
+Repo-local env vars are loaded from the target repo's `.env` and then
+`.rebase/.env` when `rebase` starts:
 
 ```bash
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-5.4-mini
 ```
 
-Shell environment variables win if already set. Keep `.rebase/` out of git; it is
-runtime state, not project source.
+Shell environment variables win if already set. Because the OpenAI call runs
+inside the RocketRide node, start the RocketRide server with the same
+`OPENAI_API_KEY` in its environment. Keep `.env` and `.rebase/` out of git; they
+are runtime state, not project source.
 
 ## Development Commands
 
@@ -252,6 +283,32 @@ pnpm --filter @rebase/dashboard typecheck
 pnpm --filter @rebase/shared build
 pnpm --filter @rebase/evals test
 ```
+
+## Submission Readiness
+
+Before recording or submitting the internship-challenge demo, run the local
+evidence collector from this repo:
+
+```bash
+pnpm submission:readiness
+```
+
+Then run the live three-agent todo scenario. A passing run must show:
+
+- RocketRide required, validated, and authoritative.
+- OpenAI planner configured for dynamic work-order planning.
+- One Task-contract coordination episode rather than pairwise churn.
+- One user decision in one agent realigning all affected agents.
+- Integration-owner work orders for exact overlapping files.
+- Adapter checkpoints blocked when `blockedFiles` are still touched.
+- Final latest merge-risk assessment `safe:true` with no blocking predicted
+  conflicts.
+- No open high-risk Task-contract conflicts.
+
+After Rebase reports safe/coordinated, run the external oracle in a disposable
+clone: apply each final worktree diff as temporary commits and let normal Git
+attempt the merge. This oracle is not part of Rebase's predictive runtime; it is
+an audit that the prediction matched real Git behavior.
 
 ## Privacy Model
 
