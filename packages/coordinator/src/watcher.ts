@@ -260,9 +260,12 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
         this.options.rocketRide,
         "rebase-work-order",
         {
+          plannerMode: process.env.OPENAI_API_KEY ? "required" : "optional",
           conflicts: collision.conflicts,
           episodes: collision.episodes,
           agents: this.options.store.listAgentSessions(this.options.repoId),
+          fingerprints: result.fingerprints,
+          diffs: await this.diffsForFingerprints(result.fingerprints),
           decisions: this.options.store.listConflictDecisions(this.options.repoId),
           publications: this.options.store.listContractPublications(
             this.options.repoId
@@ -321,8 +324,11 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
       this.options.rocketRide,
       "rebase-work-order",
       {
+        plannerMode: process.env.OPENAI_API_KEY ? "required" : "optional",
         conflicts: this.options.store.listConflicts(this.options.repoId),
         agents: this.options.store.listAgentSessions(this.options.repoId),
+        fingerprints: result.fingerprints,
+        diffs: await this.diffsForFingerprints(result.fingerprints),
         publications: this.options.store.listContractPublications(this.options.repoId)
       }
     );
@@ -530,6 +536,30 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     return diffs;
   }
 
+  private async diffsForFingerprints(
+    fingerprints: AnalyzeWorktreesResult["fingerprints"]
+  ): Promise<Array<{ worktreeId: string; diffHash: string; diff: string }>> {
+    const worktrees = new Map(
+      this.options.store
+        .listWorktrees(this.options.repoId)
+        .map((worktree) => [worktree.id, worktree])
+    );
+    const diffs: Array<{ worktreeId: string; diffHash: string; diff: string }> = [];
+    for (const fingerprint of fingerprints) {
+      const worktree = worktrees.get(fingerprint.worktreeId);
+      if (!worktree || worktree.status === "missing") continue;
+      const diff = normalizeDiff(
+        this.pathFilter.filterDiff(await getWorktreeDiff(worktree.path))
+      );
+      diffs.push({
+        worktreeId: fingerprint.worktreeId,
+        diffHash: fingerprint.diffHash,
+        diff
+      });
+    }
+    return diffs;
+  }
+
   private recordEvent(
     type: string,
     message: string,
@@ -584,7 +614,11 @@ function withMergeRisk(
       rocketRideRunIds
     };
   }
-  if (assessment.safe && episode.status === "coordinated") {
+  if (
+    assessment.safe &&
+    assessment.status === "safe" &&
+    assessment.predictedConflicts.every((conflict) => !conflict.blocking)
+  ) {
     return {
       ...episode,
       status: "safe",

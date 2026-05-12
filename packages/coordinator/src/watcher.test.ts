@@ -200,6 +200,114 @@ describe("RebaseWatcher", () => {
     store.close();
   });
 
+  it("marks an episode safe from authoritative RocketRide merge-risk output", async () => {
+    const repo = await createRepo();
+    const wtA = path.join(path.dirname(repo), `rebase-watch-a-${path.basename(repo)}`);
+    const wtB = path.join(path.dirname(repo), `rebase-watch-b-${path.basename(repo)}`);
+    await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
+    await execa("git", ["worktree", "add", "-b", "agent-b", wtB], { cwd: repo });
+    await writeFile(
+      path.join(wtA, "src", "db", "schema.ts"),
+      "export interface Task { id: string; label: string }\n"
+    );
+    await writeFile(
+      path.join(wtB, "src", "db", "schema.ts"),
+      "export interface Task { id: string; label: string }\n"
+    );
+    const realWtA = await realpath(wtA);
+    const realWtB = await realpath(wtB);
+    const leftWorktreeId = worktreeIdFor(realWtA);
+    const rightWorktreeId = worktreeIdFor(realWtB);
+    const store = createRebaseStore(":memory:");
+    for (const [id, worktreeId, cwd, joinedAt] of [
+      ["agent-a", leftWorktreeId, realWtA, 1778000000000] as const,
+      ["agent-b", rightWorktreeId, realWtB, 1778000000001] as const
+    ]) {
+      store.upsertAgentSession({
+        id,
+        repoId: "repo-1",
+        worktreeId,
+        agentKind: "codex",
+        coordinationRole: "feature",
+        cwd,
+        displayName: id,
+        lastCheckpointAt: 1778000000000,
+        joinedAt
+      });
+    }
+    const watcher = createRebaseWatcher({
+      repoRoot: repo,
+      repoId: "repo-1",
+      store,
+      now: () => 1778000000000,
+      rocketRide: {
+        status: () => ({
+          mode: "required",
+          ok: true,
+          uri: "http://127.0.0.1:5565",
+          pipelineStatus: "validated",
+          authoritative: true,
+          message: "RocketRide test runner"
+        }),
+        async runPipeline(name: string, input: Record<string, unknown>) {
+          const runId = `rr-${name}`;
+          if (name === "rebase-fingerprint") {
+            return { runId, output: { fingerprint: fingerprintFromInput(input) } };
+          }
+          if (name === "rebase-collision") {
+            return {
+              runId,
+              output: {
+                conflicts: [rocketRideConflict(leftWorktreeId, rightWorktreeId)],
+                episodes: []
+              }
+            };
+          }
+          if (name === "rebase-work-order") {
+            return {
+              runId,
+              output: {
+                episodes: [rocketRideEpisode(leftWorktreeId, rightWorktreeId, [runId])],
+                workOrders: [
+                  { ...rocketRideWorkOrder("agent-a", "contract_owner"), status: "completed" },
+                  { ...rocketRideWorkOrder("agent-b", "adapter"), status: "completed" }
+                ]
+              }
+            };
+          }
+          return {
+            runId,
+            output: {
+              mergeRisk: {
+                id: "rr-merge-risk-safe",
+                repoId: "repo-1",
+                episodeId: "rr-episode-task",
+                status: "safe",
+                risk: "low",
+                safe: true,
+                diffHash: "aligned-diff",
+                rocketRideRunId: runId,
+                predictedConflicts: [],
+                warnings: [],
+                requiredWorkOrders: [],
+                evidence: [],
+                createdAt: 1778000000000
+              }
+            }
+          };
+        }
+      }
+    });
+
+    await watcher.scanOnce();
+
+    expect(store.listCoordinationEpisodes("repo-1")[0]?.status).toBe("safe");
+    expect(store.listConflicts("repo-1")[0]?.status).toBe("resolved");
+
+    await watcher.stop();
+    store.close();
+  });
+
   it("marks removed git worktrees as missing on refresh", async () => {
     const repo = await createRepo();
     const wtA = path.join(path.dirname(repo), `rebase-watch-a-${path.basename(repo)}`);
