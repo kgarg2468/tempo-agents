@@ -278,11 +278,20 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
       }
       coordinationRocketRideRunIds.push(workOrderRun.runId);
       const workOrder = parseWorkOrderRunOutput(workOrderRun.output);
+      const gatedCoordination = this.gateCoordinationUntilDecision({
+        episodes: workOrder.episodes,
+        workOrders: workOrder.workOrders
+      });
       const episodesWithRocketRideRuns = workOrder.episodes.map((episode) =>
         withRocketRideRunIds(episode, coordinationRocketRideRunIds)
       );
       const episodesWithMergeRisk = await this.applyMergeRisk({
-        episodes: episodesWithRocketRideRuns,
+        episodes: episodesWithRocketRideRuns.map((episode) => {
+          const gated = gatedCoordination.episodes.find(
+            (candidate) => candidate.id === episode.id
+          );
+          return gated ? { ...episode, ownerAgentSessionId: gated.ownerAgentSessionId } : episode;
+        }),
         workOrders: workOrder.workOrders,
         conflicts: collision.conflicts,
         fingerprints: result.fingerprints,
@@ -291,7 +300,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
       });
       this.persistCoordination({
         episodes: episodesWithMergeRisk,
-        workOrders: workOrder.workOrders
+        workOrders: gatedCoordination.workOrders
       });
       return;
     }
@@ -454,6 +463,49 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
         this.options.store.updateConflictStatus(conflictId, "resolved", this.now());
       }
     }
+  }
+
+  private gateCoordinationUntilDecision(input: {
+    episodes: CoordinationEpisode[];
+    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
+  }): {
+    episodes: CoordinationEpisode[];
+    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
+  } {
+    const activeDecisionConflictIds = new Set(
+      this.options.store
+        .listConflictDecisions(this.options.repoId)
+        .filter((decision) => decision.status === "active")
+        .map((decision) => decision.conflictId)
+    );
+    const decidedEpisodeIds = new Set(
+      input.episodes
+        .filter((episode) =>
+          episode.conflictIds.some((conflictId) =>
+            activeDecisionConflictIds.has(conflictId)
+          )
+        )
+        .map((episode) => episode.id)
+    );
+
+    return {
+      episodes: input.episodes.map((episode) =>
+        decidedEpisodeIds.has(episode.id)
+          ? episode
+          : {
+              ...episode,
+              ownerAgentSessionId: undefined
+            }
+      ),
+      workOrders: input.workOrders.map((workOrder) =>
+        decidedEpisodeIds.has(workOrder.episodeId)
+          ? workOrder
+          : {
+              ...workOrder,
+              status: "superseded" as const
+            }
+      )
+    };
   }
 
   private async applyMergeRisk(input: {

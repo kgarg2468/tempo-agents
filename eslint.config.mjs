@@ -10,6 +10,7 @@ export default [
       ".next/**",
       "**/.next/**",
       "coverage/**",
+      "test-artifacts/**",
       ".rebase/**",
       ".superpowers/**",
       "archive/**",

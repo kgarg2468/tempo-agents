@@ -535,6 +535,13 @@ export function createMcpToolHandlers(context: McpToolContext) {
         updatedAt: now
       };
       context.store.upsertConflictDecision(decision);
+      activateEpisodeWorkOrdersForDecision({
+        store: context.store,
+        repoId: context.repoId,
+        episode,
+        decision,
+        activatedAt: now
+      });
       const interventions = queueDecisionInterventions({
         store: context.store,
         repoId: context.repoId,
@@ -654,6 +661,38 @@ export function createMcpToolHandlers(context: McpToolContext) {
       return { ok: true, message: "Rebase marked the direction as acknowledged." };
     }
   };
+}
+
+function activateEpisodeWorkOrdersForDecision(input: {
+  store: RebaseStore;
+  repoId: string;
+  episode: CoordinationEpisode | undefined;
+  decision: ConflictDecision;
+  activatedAt: number;
+}): void {
+  if (!input.episode) return;
+
+  input.store.upsertCoordinationEpisode({
+    ...input.episode,
+    ...(input.decision.ownerAgentSessionId
+      ? { ownerAgentSessionId: input.decision.ownerAgentSessionId }
+      : {}),
+    updatedAt: input.activatedAt
+  });
+
+  for (const workOrder of input.store
+    .listWorkOrders(input.repoId)
+    .filter(
+      (candidate) =>
+        candidate.episodeId === input.episode?.id &&
+        candidate.status === "superseded"
+    )) {
+    input.store.upsertWorkOrder({
+      ...workOrder,
+      status: "queued",
+      updatedAt: input.activatedAt
+    });
+  }
 }
 
 function deliverQueuedDirections(

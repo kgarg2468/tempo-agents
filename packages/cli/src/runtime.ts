@@ -110,15 +110,15 @@ export async function prepareRuntime(
 }
 
 export async function readRuntimeState(cwd: string): Promise<RebaseRuntime | null> {
-  const repoRoot = await findGitRoot(cwd);
-  const dataDir = path.join(repoRoot, ".rebase");
-  const runtimePath = path.join(dataDir, "runtime.json");
-  const existing = await readRuntime(runtimePath);
+  const checkoutRoot = await findGitRoot(cwd);
+  const lookup = await findRuntimeLookup(checkoutRoot);
+  const existing = lookup.existing;
   if (!existing?.token) return null;
   const coordinatorPort = existing.coordinatorPort ?? DEFAULT_COORDINATOR_PORT;
   const dashboardPort = existing.dashboardPort ?? DEFAULT_DASHBOARD_PORT;
+  const dataDir = existing.dataDir ?? lookup.dataDir;
   return {
-    repoRoot,
+    repoRoot: existing.repoRoot ?? lookup.repoRoot,
     dataDir,
     dbPath: existing.dbPath ?? path.join(dataDir, "rebase.sqlite"),
     envPath: existing.envPath ?? path.join(dataDir, ".env"),
@@ -135,6 +135,51 @@ export async function readRuntimeState(cwd: string): Promise<RebaseRuntime | nul
       process.env.ROCKETRIDE_URI ??
       DEFAULT_ROCKETRIDE_URI
   };
+}
+
+async function findRuntimeLookup(repoRoot: string): Promise<{
+  repoRoot: string;
+  dataDir: string;
+  existing: Partial<RebaseRuntime> | null;
+}> {
+  const primary = await readRuntimeAt(repoRoot);
+  if (primary.existing?.token) return primary;
+
+  const mainWorktreeRoot = await findMainWorktreeRoot(repoRoot);
+  if (mainWorktreeRoot && mainWorktreeRoot !== repoRoot) {
+    const shared = await readRuntimeAt(mainWorktreeRoot);
+    if (shared.existing?.token) return shared;
+  }
+
+  return primary;
+}
+
+async function readRuntimeAt(repoRoot: string): Promise<{
+  repoRoot: string;
+  dataDir: string;
+  existing: Partial<RebaseRuntime> | null;
+}> {
+  const dataDir = path.join(repoRoot, ".rebase");
+  return {
+    repoRoot,
+    dataDir,
+    existing: await readRuntime(path.join(dataDir, "runtime.json"))
+  };
+}
+
+async function findMainWorktreeRoot(repoRoot: string): Promise<string | null> {
+  const gitFile = (await readOptional(path.join(repoRoot, ".git"))).trim();
+  const gitDirLine = gitFile.split(/\r?\n/, 1)[0] ?? "";
+  const match = /^gitdir:\s*(.+)$/i.exec(gitDirLine);
+  if (!match) return null;
+
+  const gitDir = path.resolve(repoRoot, match[1] ?? "");
+  const marker = `${path.sep}.git${path.sep}worktrees${path.sep}`;
+  const markerIndex = gitDir.lastIndexOf(marker);
+  if (markerIndex === -1) return null;
+
+  const commonGitDir = gitDir.slice(0, markerIndex + `${path.sep}.git`.length);
+  return path.dirname(commonGitDir);
 }
 
 export interface RocketRideRuntimeCheckInput {

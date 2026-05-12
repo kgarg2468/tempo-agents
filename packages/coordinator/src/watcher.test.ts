@@ -187,6 +187,7 @@ describe("RebaseWatcher", () => {
       ])
     );
     expect(store.listCoordinationEpisodes("repo-1")[0]?.status).toBe("blocked");
+    expect(store.listCoordinationEpisodes("repo-1")[0]?.ownerAgentSessionId).toBeUndefined();
     expect(store.listMergeRiskAssessments("repo-1")[0]).toMatchObject({
       status: "blocked",
       rocketRideRunId: "rr-rebase-merge-risk-5"
@@ -195,6 +196,10 @@ describe("RebaseWatcher", () => {
       "RocketRide found a Task contract overlap."
     );
     expect(store.listWorkOrders("repo-1")).toHaveLength(2);
+    expect(store.listWorkOrders("repo-1").map((workOrder) => workOrder.status)).toEqual([
+      "superseded",
+      "superseded"
+    ]);
 
     await watcher.stop();
     store.close();

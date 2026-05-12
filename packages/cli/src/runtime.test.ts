@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
@@ -150,6 +150,30 @@ describe("prepareRuntime", () => {
     });
   });
 
+  it("reads the shared runtime from a linked git worktree", async () => {
+    const repo = await createRepo();
+    const runtime = await prepareRuntime({
+      cwd: repo,
+      prompts: {
+        updateGitignore: false,
+        updateAgents: false
+      }
+    });
+    const worktreeParent = await mkdtemp(path.join(tmpdir(), "rebase-cli-worktrees-"));
+    const worktree = path.join(worktreeParent, "feature");
+    await rm(worktree, { recursive: true, force: true });
+    await execa("git", ["worktree", "add", "-b", "feature", worktree, "HEAD"], {
+      cwd: repo
+    });
+
+    await expect(readRuntimeState(worktree)).resolves.toMatchObject({
+      repoRoot: repo,
+      dataDir: runtime.dataDir,
+      hookPath: runtime.hookPath,
+      token: runtime.token
+    });
+  });
+
   it("parses simple dotenv syntax", () => {
     expect(
       parseRebaseEnv([
@@ -169,6 +193,7 @@ describe("prepareRuntime", () => {
   it("preflights RocketRide using ROCKETRIDE_URI and reports a clear offline result", async () => {
     const result = await checkRocketRideRuntime({
       rocketRideUri: "http://127.0.0.1:9",
+      apiKey: "",
       fetchImpl: async () => {
         throw new TypeError("connection refused");
       }

@@ -494,6 +494,124 @@ describe("Rebase MCP tool handlers", () => {
     store.close();
   });
 
+  it("activates RocketRide proposed work orders after an episode decision", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-proposed-work-order-"));
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store,
+      rocketRide: {
+        status: () => ({
+          mode: "required",
+          ok: true,
+          uri: "http://127.0.0.1:5565",
+          pipelineStatus: "validated",
+          authoritative: true,
+          message: "RocketRide required for test"
+        }),
+        async runPipeline() {
+          throw new Error("Unexpected RocketRide pipeline run in MCP unit test");
+        }
+      }
+    });
+
+    const owner = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapter = handlers.join({
+      cwd: path.join(dir, "reminders"),
+      agentKind: "codex",
+      displayName: "reminders-agent"
+    });
+
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedSurfaces: ["Task type"],
+      evidence: ["Both fingerprints touch Task type"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "blocked",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedAgentSessionIds: [owner.sessionId, adapter.sessionId],
+      conflictIds: ["conflict-1"],
+      rocketRideRunIds: ["rr-work-order"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertWorkOrder({
+      id: "work-order-1",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: adapter.sessionId,
+      role: "adapter",
+      status: "superseded",
+      revision: 1,
+      title: "Adapt to Task contract",
+      summary: "Adapt reminder fields to the owner contract.",
+      requiredContract: "Preserve owner Task fields.",
+      allowedFiles: ["src/components/ReminderPanel.tsx"],
+      blockedFiles: ["src/shared/task.ts"],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after adapting.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+
+    const beforeDecision = await handlers.waitForDirection({
+      sessionId: adapter.sessionId,
+      timeoutMs: 1
+    });
+    expect(beforeDecision.workOrders).toEqual([]);
+    expect(beforeDecision.keepWaiting).toBe(true);
+
+    handlers.recordDecision({
+      sessionId: owner.sessionId,
+      conflictId: "conflict-1",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection: "labels-agent owns the Task contract.",
+      ownerAgentSessionId: owner.sessionId,
+      createdBy: "agent"
+    });
+
+    const delivered = await handlers.waitForDirection({
+      sessionId: adapter.sessionId,
+      timeoutMs: 1
+    });
+    expect(delivered.workOrders).toHaveLength(1);
+    expect(delivered.workOrders[0]).toMatchObject({
+      id: "work-order-1",
+      role: "adapter",
+      status: "queued"
+    });
+    expect(
+      store.listCoordinationEpisodes("repo-1").find((episode) => episode.id === "episode-1")
+        ?.ownerAgentSessionId
+    ).toBe(owner.sessionId);
+
+    store.close();
+  });
+
   it("does not re-offer choices after a decision but keeps the owner paused until contract publication", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-decided-"));
     const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
