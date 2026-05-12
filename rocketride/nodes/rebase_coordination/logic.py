@@ -1,6 +1,9 @@
 import hashlib
 import json
+import os
 import re
+import urllib.error
+import urllib.request
 from typing import Any
 
 
@@ -575,7 +578,21 @@ def build_coordination(value: dict[str, Any]) -> dict[str, Any]:
                 build_work_order(repo_id, episode, agent, owner_id, merge_contract, group, created_at, affected_agents)
             )
 
-    return {"episodes": episodes, "workOrders": work_orders}
+    result = {"episodes": episodes, "workOrders": work_orders}
+    coordination_plan = build_openai_coordination_plan(value, result, created_at)
+    if coordination_plan:
+        result["workOrders"] = apply_coordination_plan_to_work_orders(
+            result["workOrders"],
+            coordination_plan,
+            episodes,
+            agents,
+            created_at,
+        )
+        coordination_plan["workOrderIds"] = [
+            str(order.get("id")) for order in result["workOrders"]
+        ]
+        result["coordinationPlan"] = coordination_plan
+    return result
 
 
 def build_merge_risk(value: dict[str, Any]) -> dict[str, Any]:
@@ -637,7 +654,7 @@ def build_merge_risk(value: dict[str, Any]) -> dict[str, Any]:
             item
             for item in predicted
             if item.get("reasonCode")
-            not in {"shared_contract_without_contract", "open_high_conflict", "same_hunk", "same_file"}
+            not in {"shared_contract_without_contract", "open_high_conflict"}
         ]
         incomplete_work_order_ids = []
 
@@ -1084,6 +1101,237 @@ def build_work_order(
     }
 
 
+def build_openai_coordination_plan(
+    value: dict[str, Any],
+    deterministic_result: dict[str, Any],
+    created_at: int,
+) -> dict[str, Any] | None:
+    mode = str(value.get("plannerMode") or "optional")
+    if mode not in {"optional", "required", "disabled"}:
+        mode = "optional"
+    if mode == "disabled":
+        return None
+    if not deterministic_result.get("episodes") or not deterministic_result.get("workOrders"):
+        return None
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    fixture = os.environ.get("REBASE_OPENAI_PLANNER_FIXTURE")
+    if not api_key:
+        if mode == "required":
+            raise RebaseCoordinationError(
+                "OpenAI planner is required but OPENAI_API_KEY is not configured in the RocketRide environment"
+            )
+        return None
+
+    try:
+        raw_plan = json.loads(fixture) if fixture else request_openai_coordination_plan(value, deterministic_result)
+        return normalize_openai_coordination_plan(raw_plan, deterministic_result, created_at)
+    except Exception as error:
+        if mode == "required":
+            if isinstance(error, RebaseCoordinationError):
+                raise
+            raise RebaseCoordinationError(f"OpenAI coordination planner failed: {error}") from error
+        return None
+
+
+def request_openai_coordination_plan(
+    value: dict[str, Any],
+    deterministic_result: dict[str, Any],
+) -> dict[str, Any]:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RebaseCoordinationError("OPENAI_API_KEY is not configured")
+    model = os.environ.get("OPENAI_MODEL") or "gpt-5.4-mini"
+    body = {
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "max_completion_tokens": 1800,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are Rebase's coordination planner for parallel coding agents. "
+                    "Use agent intent, fingerprints, diffs, conflicts, and existing contracts "
+                    "to assign ownership and produce concrete work orders. Return JSON only. "
+                    "Do not claim merge safety; deterministic merge-risk checks are authoritative."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "requiredShape": {
+                            "strategy": "split_ownership | integration_owner | pause | proceed",
+                            "rationale": "short reason",
+                            "ownerAgentSessionId": "agent id that owns semantic contract",
+                            "integrationOwnerAgentSessionId": "optional agent id that owns exact overlapping file text",
+                            "requiredTerms": ["required compatibility terms"],
+                            "validationChecklist": ["checks agents must satisfy"],
+                            "workOrders": [
+                                {
+                                    "agentSessionId": "agent id",
+                                    "role": "contract_owner | integration_owner | adapter",
+                                    "summary": "concrete assignment",
+                                    "allowedFiles": ["paths"],
+                                    "blockedFiles": ["paths"],
+                                    "requiredContract": "contract/integration terms",
+                                    "validationChecklist": ["checks"]
+                                }
+                            ],
+                        },
+                        "agents": compact_agents(as_list(value.get("agents") or value.get("plans"))),
+                        "fingerprints": clip_json(as_list(value.get("fingerprints")), 12_000),
+                        "diffs": clip_json(as_list(value.get("diffs")), 16_000),
+                        "conflicts": clip_json(as_list(value.get("conflicts")), 12_000),
+                        "decisions": clip_json(as_list(value.get("decisions") or value.get("activeDecisions")), 6_000),
+                        "publications": clip_json(as_list(value.get("publications")), 10_000),
+                        "deterministicWorkOrders": clip_json(deterministic_result.get("workOrders"), 10_000),
+                    },
+                    separators=(",", ":"),
+                ),
+            },
+        ],
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "authorization": f"Bearer {api_key}",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            response_body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")[:500]
+        raise RebaseCoordinationError(f"OpenAI planner HTTP {error.code}: {detail}") from error
+    content = (((response_body.get("choices") or [{}])[0].get("message") or {}).get("content"))
+    if not content:
+        raise RebaseCoordinationError("OpenAI planner response was empty")
+    parsed = json.loads(content)
+    if not isinstance(parsed, dict):
+        raise RebaseCoordinationError("OpenAI planner response was not an object")
+    return parsed
+
+
+def normalize_openai_coordination_plan(
+    raw_plan: dict[str, Any],
+    deterministic_result: dict[str, Any],
+    created_at: int,
+) -> dict[str, Any]:
+    if not isinstance(raw_plan, dict):
+        raise RebaseCoordinationError("OpenAI coordination plan must be an object")
+    strategy = str(raw_plan.get("strategy") or "split_ownership")
+    if strategy not in {"split_ownership", "integration_owner", "pause", "proceed"}:
+        strategy = "split_ownership"
+    deterministic_orders = [
+        order for order in as_list(deterministic_result.get("workOrders")) if isinstance(order, dict)
+    ]
+    agent_ids = {str(order.get("agentSessionId")) for order in deterministic_orders}
+    owner_id = text_or_none(raw_plan.get("ownerAgentSessionId")) or text_or_none(
+        (deterministic_result.get("episodes") or [{}])[0].get("ownerAgentSessionId")
+        if isinstance(deterministic_result.get("episodes"), list)
+        and deterministic_result.get("episodes")
+        else None
+    )
+    integration_owner_id = text_or_none(raw_plan.get("integrationOwnerAgentSessionId"))
+    if integration_owner_id and integration_owner_id not in agent_ids:
+        integration_owner_id = None
+    if owner_id and owner_id not in agent_ids:
+        owner_id = None
+    work_orders = [
+        order for order in as_list(raw_plan.get("workOrders")) if isinstance(order, dict)
+    ]
+    return {
+        "source": "openai",
+        "strategy": strategy,
+        "rationale": bounded_text(raw_plan.get("rationale"), "OpenAI produced a coordination plan.", 2000),
+        **({"ownerAgentSessionId": owner_id} if owner_id else {}),
+        **({"integrationOwnerAgentSessionId": integration_owner_id} if integration_owner_id else {}),
+        "workOrderIds": [],
+        "requiredTerms": bounded_text_list(raw_plan.get("requiredTerms"), 30),
+        "validationChecklist": bounded_text_list(raw_plan.get("validationChecklist"), 30),
+        "_rawWorkOrders": work_orders,
+        "_createdAt": created_at,
+    }
+
+
+def apply_coordination_plan_to_work_orders(
+    deterministic_orders: list[dict[str, Any]],
+    coordination_plan: dict[str, Any],
+    episodes: list[dict[str, Any]],
+    agents: list[dict[str, Any]],
+    created_at: int,
+) -> list[dict[str, Any]]:
+    raw_orders = [
+        order for order in as_list(coordination_plan.pop("_rawWorkOrders", [])) if isinstance(order, dict)
+    ]
+    coordination_plan.pop("_createdAt", None)
+    base_by_agent = {
+        str(order.get("agentSessionId")): dict(order)
+        for order in deterministic_orders
+        if isinstance(order, dict)
+    }
+    episode = episodes[0] if episodes else {}
+    episode_id = str(episode.get("id") or "episode-none")
+    repo_id = str(episode.get("repoId") or infer_repo_id({"episodes": episodes}))
+    all_agent_ids = [str(agent.get("id")) for agent in agents if agent.get("id")]
+    for raw_order in raw_orders:
+        agent_id = text_or_none(raw_order.get("agentSessionId"))
+        if not agent_id or agent_id not in all_agent_ids:
+            continue
+        base = base_by_agent.get(agent_id) or {
+            "id": stable_id_parts("work-order", episode_id, agent_id, "openai", str(created_at)),
+            "repoId": repo_id,
+            "episodeId": episode_id,
+            "agentSessionId": agent_id,
+            "status": "queued",
+            "revision": 1,
+            "sharedFiles": [],
+            "createdAt": created_at,
+            "updatedAt": created_at,
+        }
+        role = str(raw_order.get("role") or base.get("role") or "adapter")
+        if role not in {"contract_owner", "integration_owner", "adapter"}:
+            role = "adapter"
+        validation = bounded_text_list(raw_order.get("validationChecklist"), 10)
+        next_checkpoint = bounded_text(
+            raw_order.get("nextCheckpoint"),
+            "Checkpoint after satisfying this OpenAI coordination work order.",
+            500,
+        )
+        if validation:
+            next_checkpoint = bounded_text(
+                f"{next_checkpoint} Validate: {'; '.join(validation)}",
+                next_checkpoint,
+                500,
+            )
+        base_by_agent[agent_id] = {
+            **base,
+            "role": role,
+            "title": bounded_text(raw_order.get("title"), title_for_role(role, episode), 200),
+            "summary": bounded_text(raw_order.get("summary"), str(base.get("summary") or "Follow the OpenAI coordination plan."), 2000),
+            "requiredContract": bounded_text(raw_order.get("requiredContract"), str(base.get("requiredContract") or coordination_plan.get("rationale") or "Follow the OpenAI coordination plan."), 4000),
+            "allowedFiles": bounded_path_list(raw_order.get("allowedFiles") or base.get("allowedFiles")),
+            "blockedFiles": bounded_path_list(raw_order.get("blockedFiles") or base.get("blockedFiles")),
+            "sharedFiles": bounded_path_list(raw_order.get("sharedFiles") or base.get("sharedFiles")),
+            "nextCheckpoint": next_checkpoint,
+            "updatedAt": created_at,
+        }
+    return sorted(base_by_agent.values(), key=lambda order: str(order.get("agentSessionId")))
+
+
+def title_for_role(role: str, episode: dict[str, Any]) -> str:
+    surface = str(episode.get("surface") or "shared surface")
+    if role == "contract_owner":
+        return f"Own {surface}"
+    if role == "integration_owner":
+        return f"Integrate {surface} files"
+    return f"Adapt to {surface}"
+
+
 def find_existing_episode(
     episodes: list[dict[str, Any]],
     episode_id: str,
@@ -1169,6 +1417,47 @@ def unique_in_order(values: list[Any]) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def text_or_none(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def bounded_text(value: Any, fallback: str, limit: int) -> str:
+    text = text_or_none(value) or fallback
+    return text[:limit]
+
+
+def bounded_text_list(value: Any, limit: int) -> list[str]:
+    return [str(item).strip()[:1000] for item in as_list(value) if str(item).strip()][:limit]
+
+
+def bounded_path_list(value: Any) -> list[str]:
+    return unique_in_order([str(item).strip() for item in as_list(value) if str(item).strip()])[:40]
+
+
+def compact_agents(agents: list[Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(agent.get("id")),
+            "worktreeId": str(agent.get("worktreeId")),
+            "displayName": str(agent.get("displayName") or ""),
+            "coordinationRole": str(agent.get("coordinationRole") or ""),
+            "currentPlan": str(agent.get("currentPlan") or "")[:2000],
+        }
+        for agent in agents
+        if isinstance(agent, dict) and agent.get("id")
+    ]
+
+
+def clip_json(value: Any, limit: int) -> Any:
+    text = json.dumps(value, separators=(",", ":"), default=str)
+    if len(text) <= limit:
+        return value
+    return json.loads(text[:limit] + '"..."') if text.startswith('"') else text[:limit]
 
 
 def require_text(value: dict[str, Any], key: str) -> str:

@@ -206,6 +206,124 @@ def test_merge_risk_operation_marks_completed_contract_safe():
     assert output["mergeRisk"]["predictedConflicts"] == []
 
 
+def test_merge_risk_keeps_same_hunk_blocked_after_completed_work_orders():
+    item = episode()
+    item["status"] = "coordinated"
+    item["mergeContract"] = {
+        "id": "merge-contract-1",
+        "repoId": "repo-1",
+        "episodeId": "episode-1",
+        "surface": "Task contract",
+        "ownerAgentSessionId": "agent-a",
+        "summary": "Task includes label and subtitle.",
+        "files": ["src/shared/task.ts"],
+        "sourcePublicationId": "publication-1",
+        "updatedAt": 1778000000000,
+    }
+
+    output = run_operation(
+        "merge-risk",
+        {
+            "repoId": "repo-1",
+            "episode": item,
+            "conflicts": [conflict()],
+            "fingerprints": [
+                fingerprint("fp-a", "wt-a"),
+                fingerprint("fp-b", "wt-b"),
+            ],
+            "workOrders": [
+                work_order("work-order-agent-a-r1", "agent-a", "completed"),
+                work_order("work-order-agent-b-r1", "agent-b", "completed"),
+            ],
+            "diffs": [
+                {
+                    "worktreeId": "wt-a",
+                    "diffHash": "diff-a",
+                    "diff": "\n".join(
+                        [
+                            "diff --git a/src/shared/task.ts b/src/shared/task.ts",
+                            "@@ -1,1 +1,1 @@",
+                            "-export interface Task { id: string }",
+                            "+export interface Task { id: string; label: string }",
+                        ]
+                    ),
+                },
+                {
+                    "worktreeId": "wt-b",
+                    "diffHash": "diff-b",
+                    "diff": "\n".join(
+                        [
+                            "diff --git a/src/shared/task.ts b/src/shared/task.ts",
+                            "@@ -1,1 +1,1 @@",
+                            "-export interface Task { id: string }",
+                            "+export interface Task { id: string; subtitle: string | null }",
+                        ]
+                    ),
+                },
+            ],
+            "createdAt": 1778000000000,
+        },
+    )
+
+    merge_risk = output["mergeRisk"]
+    assert merge_risk["status"] == "blocked"
+    assert merge_risk["safe"] is False
+    assert merge_risk["predictedConflicts"][0]["reasonCode"] == "same_hunk"
+
+
+def test_work_order_operation_uses_openai_plan_fixture_for_integration_owner(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv(
+        "REBASE_OPENAI_PLANNER_FIXTURE",
+        json.dumps(
+            {
+                "strategy": "split_ownership",
+                "rationale": "Labels owns the contract and integrates overlapping files.",
+                "ownerAgentSessionId": "agent-a",
+                "integrationOwnerAgentSessionId": "agent-a",
+                "workOrders": [
+                    {
+                        "agentSessionId": "agent-a",
+                        "role": "integration_owner",
+                        "summary": "Converge shared task files to the combined shape.",
+                        "allowedFiles": ["src/shared/task.ts"],
+                        "requiredContract": "Task includes label and subtitle.",
+                        "validationChecklist": ["No same-hunk blockers remain"],
+                    },
+                    {
+                        "agentSessionId": "agent-b",
+                        "role": "adapter",
+                        "summary": "Adapt reminder work to the integrated shape.",
+                        "allowedFiles": ["src/shared/task.ts"],
+                        "requiredContract": "Task includes label and subtitle.",
+                    },
+                ],
+            }
+        ),
+    )
+
+    output = run_operation(
+        "work-order",
+        {
+            "plannerMode": "required",
+            "conflicts": [conflict()],
+            "episodes": [],
+            "agents": [
+                agent("agent-a", "wt-a", 1),
+                agent("agent-b", "wt-b", 2),
+            ],
+            "decisions": [],
+            "publications": [],
+            "existingWorkOrders": [],
+        },
+    )
+
+    assert output["coordinationPlan"]["source"] == "openai"
+    roles = {order["agentSessionId"]: order["role"] for order in output["workOrders"]}
+    assert roles == {"agent-a": "integration_owner", "agent-b": "adapter"}
+    assert output["workOrders"][0]["allowedFiles"] == ["src/shared/task.ts"]
+
+
 def test_operation_accepts_json_text_payloads():
     output = run_operation(
         "merge-risk",

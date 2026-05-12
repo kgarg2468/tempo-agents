@@ -8,9 +8,10 @@
   "path": "nodes.rebase_coordination",
   "prefix": "rebase_coordination",
   "description": [
-    "Deterministic RocketRide execution node for Rebase coordination.",
+    "RocketRide execution node for Rebase coordination.",
     "It converts Rebase JSON inputs into typed fingerprint, collision, work-order,",
-    "or merge-risk JSON outputs without using an LLM or external API key."
+    "or merge-risk JSON outputs. Work-order planning can call OpenAI when",
+    "plannerMode is required and OPENAI_API_KEY is configured in RocketRide."
   ],
   "lanes": {
     "text": ["text"],
