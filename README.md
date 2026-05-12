@@ -2,6 +2,8 @@
 
 Real-time conflict prediction for AI-coding teams.
 
+[Demo video](https://www.youtube.com/watch?v=LjHKqxBzpMM)
+
 Tempo is a local-first coordination layer for teams running multiple AI agents
 against the same repository. It watches the code that is being written, extracts
 intent fingerprints from live diffs, predicts collisions across worktrees, and
