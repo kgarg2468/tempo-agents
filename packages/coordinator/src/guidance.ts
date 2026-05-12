@@ -3,16 +3,16 @@ import type {
   Fingerprint,
   InterventionDirective,
   InterventionDirectiveRole,
-  RebaseConflict
-} from "@rebase/shared";
-import { interventionDirectiveSchema } from "@rebase/shared";
+  TempoConflict
+} from "@tempo/shared";
+import { interventionDirectiveSchema } from "@tempo/shared";
 
 const MAX_DIRECTIVE_CHARS = 1200;
 const MAX_CONTEXT_ITEMS = 5;
 const MAX_PEER_SUMMARY_CHARS = 140;
 
 export interface AgentDirectiveInput {
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   targetSessionId: string;
   ownerSessionId?: string | null | undefined;
   agents: AgentSession[];
@@ -86,7 +86,7 @@ function peerFor({
   target: AgentSession | undefined;
   owner: AgentSession | null | undefined;
   agents: AgentSession[];
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
 }): AgentSession | undefined {
   if (owner && owner.id !== target?.id) return owner;
   return agents.find(
@@ -120,7 +120,7 @@ function summarizePeerIntent(
 
 function sharedFiles(
   fingerprints: Fingerprint[],
-  conflict: RebaseConflict
+  conflict: TempoConflict
 ): string[] {
   const relevant = fingerprints.filter((fingerprint) =>
     conflict.affectedWorktreeIds.includes(fingerprint.worktreeId)
@@ -148,7 +148,7 @@ function nextActionFor({
   peerName
 }: {
   role: InterventionDirectiveRole;
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   peerName?: string | undefined;
 }): string {
   if (role === "contract_owner") {
@@ -169,7 +169,7 @@ function planStepsFor({
   peerName
 }: {
   role: InterventionDirectiveRole;
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   peerName?: string | undefined;
 }): string[] {
   if (role === "contract_owner") {
@@ -199,7 +199,7 @@ function planStepsFor({
   return [
     `Pause ${conflict.primarySurface} edits.`,
     "Review the numbered coordination choices with the user.",
-    "Record the user-approved decision in Rebase.",
+    "Record the user-approved decision in Tempo.",
     "Continue only after a direction is available."
   ];
 }

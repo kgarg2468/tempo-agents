@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./styles.css";
 
 export const metadata: Metadata = {
-  title: "Rebase",
+  title: "Tempo",
   description: "Local-first coordination for parallel AI coding sessions"
 };
 

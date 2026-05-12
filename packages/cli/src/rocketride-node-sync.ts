@@ -2,33 +2,33 @@ import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export interface SyncRebaseRocketRideNodeInput {
+export interface SyncTempoRocketRideNodeInput {
   sourceDir?: string | undefined;
   rocketRideServerDir?: string | undefined;
 }
 
-export interface SyncRebaseRocketRideNodeResult {
+export interface SyncTempoRocketRideNodeResult {
   sourceDir: string;
   targetDir: string;
   runtimeTargetDir?: string | undefined;
   filesCopied: string[];
 }
 
-const NODE_NAME = "rebase_coordination";
+const NODE_NAME = "tempo_coordination";
 
-export async function syncRebaseRocketRideNode(
-  input: SyncRebaseRocketRideNodeInput = {}
-): Promise<SyncRebaseRocketRideNodeResult> {
-  const sourceDir = input.sourceDir ?? defaultRebaseRocketRideNodeDir();
+export async function syncTempoRocketRideNode(
+  input: SyncTempoRocketRideNodeInput = {}
+): Promise<SyncTempoRocketRideNodeResult> {
+  const sourceDir = input.sourceDir ?? defaultTempoRocketRideNodeDir();
   const rocketRideServerDir =
     input.rocketRideServerDir ?? process.env.ROCKETRIDE_SERVER_DIR;
   if (!rocketRideServerDir) {
     throw new Error(
-      "Set ROCKETRIDE_SERVER_DIR or pass --rocketride-server-dir=/path/to/rocketride-server before running `pnpm rebase rocketride:sync`."
+      "Set ROCKETRIDE_SERVER_DIR or pass --rocketride-server-dir=/path/to/rocketride-server before running `pnpm tempo rocketride:sync`."
     );
   }
 
-  await assertDirectory(sourceDir, "Rebase RocketRide node source");
+  await assertDirectory(sourceDir, "Tempo RocketRide node source");
   const filesCopied = await listTopLevelFiles(sourceDir);
   const targetDir = path.join(
     rocketRideServerDir,
@@ -49,10 +49,10 @@ export async function syncRebaseRocketRideNode(
   return { sourceDir, targetDir, runtimeTargetDir, filesCopied };
 }
 
-export function defaultRebaseRocketRideNodeDir(): string {
+export function defaultTempoRocketRideNodeDir(): string {
   return path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../../../rocketride/nodes/rebase_coordination"
+    "../../../rocketride/nodes/tempo_coordination"
   );
 }
 

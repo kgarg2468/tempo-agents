@@ -5,19 +5,19 @@ import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import {
   checkRocketRideRuntime,
-  loadRebaseEnv,
-  parseRebaseEnv,
+  loadTempoEnv,
+  parseTempoEnv,
   prepareRuntime,
   readRuntimeState
 } from "./runtime.js";
 
 async function createRepo() {
-  const dir = await mkdtemp(path.join(tmpdir(), "rebase-cli-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "tempo-cli-"));
   await execa("git", ["init", "-b", "main"], { cwd: dir });
   await writeFile(path.join(dir, "README.md"), "hello\n");
   await execa("git", ["add", "README.md"], { cwd: dir });
-  await execa("git", ["config", "user.email", "rebase@example.com"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Rebase Test"], { cwd: dir });
+  await execa("git", ["config", "user.email", "tempo@example.com"], { cwd: dir });
+  await execa("git", ["config", "user.name", "Tempo Test"], { cwd: dir });
   await execa("git", ["commit", "-m", "init"], { cwd: dir });
   return realpath(dir);
 }
@@ -38,14 +38,14 @@ describe("prepareRuntime", () => {
     expect(runtime.coordinatorUrl).toBe("http://127.0.0.1:3747");
     expect(runtime.dashboardUrl).toBe("http://127.0.0.1:3748");
     expect(runtime.mcpUrl).toBe("http://127.0.0.1:3747/mcp");
-    await expect(readFile(path.join(repo, ".rebase", "runtime.json"), "utf8")).resolves.toContain(
+    await expect(readFile(path.join(repo, ".tempo", "runtime.json"), "utf8")).resolves.toContain(
       runtime.token
     );
-    await expect(readFile(path.join(repo, ".rebase", ".gitignore"), "utf8")).resolves.toContain(
+    await expect(readFile(path.join(repo, ".tempo", ".gitignore"), "utf8")).resolves.toContain(
       "*"
     );
     await expect(
-      readFile(path.join(repo, ".rebase", "hooks", "codex-hook.mjs"), "utf8")
+      readFile(path.join(repo, ".tempo", "hooks", "codex-hook.mjs"), "utf8")
     ).resolves.toContain("/api/hooks/codex");
     await expect(readFile(path.join(repo, "AGENTS.md"), "utf8")).rejects.toThrow();
   });
@@ -58,27 +58,29 @@ describe("prepareRuntime", () => {
       prompts: {
         updateGitignore: true,
         updateAgents: true,
-        updateRebaseIgnore: true
+        updateTempoIgnore: true
       }
     });
 
     await expect(readFile(path.join(repo, ".gitignore"), "utf8")).resolves.toContain(
-      ".rebase/"
+      ".tempo/"
     );
     await expect(readFile(path.join(repo, "AGENTS.md"), "utf8")).resolves.toContain(
-      "BEGIN REBASE"
+      "BEGIN TEMPO"
     );
     const agents = await readFile(path.join(repo, "AGENTS.md"), "utf8");
-    expect(agents).toContain("if `rebase_wait_for_direction` times out with `keepWaiting: true`");
-    expect(agents).toContain("call `rebase_acknowledge_intervention`");
-    expect(agents).toContain("rely on Rebase hooks");
-    expect(agents).toContain("rebase mcp checkpoint --json");
-    await expect(readFile(path.join(repo, ".rebaseignore"), "utf8")).resolves.toContain(
-      "Rebase privacy ignore"
+    expect(agents).toContain("if `tempo_wait_for_direction` times out with `keepWaiting: true`");
+    expect(agents).toContain("When Tempo returns `choices`, show the numbered options and keep polling");
+    expect(agents).toContain("If another session records the decision");
+    expect(agents).toContain("call `tempo_acknowledge_intervention`");
+    expect(agents).toContain("rely on Tempo hooks");
+    expect(agents).toContain("tempo mcp checkpoint --json");
+    await expect(readFile(path.join(repo, ".tempoignore"), "utf8")).resolves.toContain(
+      "Tempo privacy ignore"
     );
   });
 
-  it("loads repo-local Rebase env without overriding existing shell env", async () => {
+  it("loads repo-local Tempo env without overriding existing shell env", async () => {
     const repo = await createRepo();
     const runtime = await prepareRuntime({
       cwd: repo,
@@ -92,7 +94,7 @@ describe("prepareRuntime", () => {
       [
         "OPENAI_API_KEY=from-file",
         "OPENAI_MODEL=\"gpt-5.4-mini\"",
-        "REBASE_LOCAL_TOKEN=from-file",
+        "TEMPO_LOCAL_TOKEN=from-file",
         ""
       ].join("\n")
     );
@@ -100,14 +102,14 @@ describe("prepareRuntime", () => {
       OPENAI_API_KEY: "from-shell"
     };
 
-    await loadRebaseEnv(runtime.envPath, env);
+    await loadTempoEnv(runtime.envPath, env);
 
     expect(env.OPENAI_API_KEY).toBe("from-shell");
     expect(env.OPENAI_MODEL).toBe("gpt-5.4-mini");
-    expect(env.REBASE_LOCAL_TOKEN).toBe("from-file");
+    expect(env.TEMPO_LOCAL_TOKEN).toBe("from-file");
   });
 
-  it("loads project .env before .rebase env so project OpenAI keys are usable", async () => {
+  it("loads project .env before .tempo env so project OpenAI keys are usable", async () => {
     const repo = await createRepo();
     const runtime = await prepareRuntime({
       cwd: repo,
@@ -122,15 +124,15 @@ describe("prepareRuntime", () => {
     );
     await writeFile(
       runtime.envPath,
-      ["OPENAI_API_KEY=from-runtime", "REBASE_LOCAL_TOKEN=from-runtime", ""].join("\n")
+      ["OPENAI_API_KEY=from-runtime", "TEMPO_LOCAL_TOKEN=from-runtime", ""].join("\n")
     );
     const env: Record<string, string | undefined> = {};
 
-    await loadRebaseEnv(path.join(repo, ".env"), env);
-    await loadRebaseEnv(runtime.envPath, env);
+    await loadTempoEnv(path.join(repo, ".env"), env);
+    await loadTempoEnv(runtime.envPath, env);
 
     expect(env.OPENAI_API_KEY).toBe("from-project");
-    expect(env.REBASE_LOCAL_TOKEN).toBe("from-runtime");
+    expect(env.TEMPO_LOCAL_TOKEN).toBe("from-runtime");
   });
 
   it("reads existing runtime state without starting the coordinator", async () => {
@@ -159,7 +161,7 @@ describe("prepareRuntime", () => {
         updateAgents: false
       }
     });
-    const worktreeParent = await mkdtemp(path.join(tmpdir(), "rebase-cli-worktrees-"));
+    const worktreeParent = await mkdtemp(path.join(tmpdir(), "tempo-cli-worktrees-"));
     const worktree = path.join(worktreeParent, "feature");
     await rm(worktree, { recursive: true, force: true });
     await execa("git", ["worktree", "add", "-b", "feature", worktree, "HEAD"], {
@@ -176,7 +178,7 @@ describe("prepareRuntime", () => {
 
   it("parses simple dotenv syntax", () => {
     expect(
-      parseRebaseEnv([
+      parseTempoEnv([
         "# comment",
         "OPENAI_API_KEY='sk-test'",
         "OPENAI_MODEL=gpt-5.4-mini # model comment",

@@ -1,0 +1,69 @@
+{
+  "title": "Tempo Coordination",
+  "protocol": "tempo_coordination://",
+  "classType": ["text"],
+  "capabilities": ["noremote", "nosaas"],
+  "register": "filter",
+  "node": "python",
+  "path": "nodes.tempo_coordination",
+  "prefix": "tempo_coordination",
+  "description": [
+    "RocketRide execution node for Tempo coordination.",
+    "It converts Tempo JSON inputs into typed fingerprint, collision, work-order,",
+    "or merge-risk JSON outputs. Work-order planning can call OpenAI when",
+    "plannerMode is required and OPENAI_API_KEY is configured in RocketRide."
+  ],
+  "lanes": {
+    "text": ["text"],
+    "table": ["text"]
+  },
+  "input": [
+    {
+      "lane": "text",
+      "output": [{ "lane": "text" }]
+    },
+    {
+      "lane": "table",
+      "output": [{ "lane": "text" }]
+    }
+  ],
+  "preconfig": {
+    "default": "merge-risk",
+    "profiles": {
+      "fingerprint": { "operation": "fingerprint" },
+      "collision": { "operation": "collision" },
+      "work-order": { "operation": "work-order" },
+      "merge-risk": { "operation": "merge-risk" }
+    }
+  },
+  "fields": {
+    "tempo_coordination.operation": {
+      "type": "string",
+      "title": "Operation",
+      "enum": ["fingerprint", "collision", "work-order", "merge-risk"],
+      "default": "merge-risk"
+    }
+  },
+  "shape": [
+    {
+      "section": "Pipe",
+      "title": "Tempo Coordination",
+      "properties": ["tempo_coordination.operation"]
+    }
+  ],
+  "test": {
+    "profiles": ["merge-risk"],
+    "outputs": ["text"],
+    "cases": [
+      {
+        "name": "Return typed merge-risk output",
+        "text": "{\"episodes\":[],\"workOrders\":[]}",
+        "expect": {
+          "text": {
+            "contains": "\"mergeRisk\""
+          }
+        }
+      }
+    ]
+  }
+}

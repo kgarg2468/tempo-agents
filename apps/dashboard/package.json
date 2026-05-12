@@ -1,5 +1,5 @@
 {
-  "name": "@rebase/dashboard",
+  "name": "@tempo/dashboard",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.10.0",
-    "@rebase/shared": "workspace:*",
+    "@tempo/shared": "workspace:*",
     "lucide-react": "^0.562.0",
     "next": "^16.1.0",
     "react": "^19.2.3",

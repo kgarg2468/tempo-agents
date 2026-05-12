@@ -1,5 +1,5 @@
 {
-  "name": "@rebase/coordinator",
+  "name": "@tempo/coordinator",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -19,7 +19,7 @@
   "dependencies": {
     "@fastify/websocket": "^11.2.0",
     "@modelcontextprotocol/sdk": "^1.24.0",
-    "@rebase/shared": "workspace:*",
+    "@tempo/shared": "workspace:*",
     "better-sqlite3": "^12.5.0",
     "chokidar": "^4.0.3",
     "drizzle-orm": "^0.45.1",

@@ -6,15 +6,15 @@ import {
   fingerprintSchema,
   mergeRiskAssessmentSchema,
   workOrderSchema
-} from "@rebase/shared";
+} from "@tempo/shared";
 import type {
   CoordinationEpisode,
   CoordinationPlan,
   Fingerprint,
-  RebaseConflict,
+  TempoConflict,
   WorkOrder
-} from "@rebase/shared";
-import type { RebasePipelineName } from "./rocketride.js";
+} from "@tempo/shared";
+import type { TempoPipelineName } from "./rocketride.js";
 
 export const fingerprintRunOutputSchema = z.object({
   fingerprint: fingerprintSchema
@@ -40,7 +40,7 @@ export interface FingerprintRunOutput {
 }
 
 export interface CollisionRunOutput {
-  conflicts: RebaseConflict[];
+  conflicts: TempoConflict[];
   episodes: CoordinationEpisode[];
 }
 
@@ -56,41 +56,41 @@ export function parseFingerprintRunOutput(output: unknown): FingerprintRunOutput
   return parseRocketRideOutput(
     output,
     fingerprintRunOutputSchema,
-    "rebase-fingerprint"
+    "tempo-fingerprint"
   );
 }
 
 export function parseCollisionRunOutput(output: unknown): CollisionRunOutput {
-  return parseRocketRideOutput(output, collisionRunOutputSchema, "rebase-collision");
+  return parseRocketRideOutput(output, collisionRunOutputSchema, "tempo-collision");
 }
 
 export function parseWorkOrderRunOutput(output: unknown): WorkOrderRunOutput {
-  return parseRocketRideOutput(output, workOrderRunOutputSchema, "rebase-work-order");
+  return parseRocketRideOutput(output, workOrderRunOutputSchema, "tempo-work-order");
 }
 
 export function parseMergeRiskRunOutput(output: unknown): MergeRiskRunOutput {
-  return parseRocketRideOutput(output, mergeRiskRunOutputSchema, "rebase-merge-risk");
+  return parseRocketRideOutput(output, mergeRiskRunOutputSchema, "tempo-merge-risk");
 }
 
 export function parsePipelineRunOutput(
-  name: RebasePipelineName,
+  name: TempoPipelineName,
   output: unknown
 ): FingerprintRunOutput | CollisionRunOutput | WorkOrderRunOutput | MergeRiskRunOutput {
   switch (name) {
-    case "rebase-fingerprint":
+    case "tempo-fingerprint":
       return parseFingerprintRunOutput(output);
-    case "rebase-collision":
+    case "tempo-collision":
       return parseCollisionRunOutput(output);
-    case "rebase-work-order":
+    case "tempo-work-order":
       return parseWorkOrderRunOutput(output);
-    case "rebase-merge-risk":
+    case "tempo-merge-risk":
       return parseMergeRiskRunOutput(output);
   }
 }
 
-export function smokeInputForPipeline(name: RebasePipelineName): Record<string, unknown> {
+export function smokeInputForPipeline(name: TempoPipelineName): Record<string, unknown> {
   switch (name) {
-    case "rebase-fingerprint":
+    case "tempo-fingerprint":
       return {
         operation: "fingerprint",
         repoId: "smoke-repo",
@@ -105,7 +105,7 @@ export function smokeInputForPipeline(name: RebasePipelineName): Record<string, 
         ],
         diff: "diff --git a/src/shared/task.ts b/src/shared/task.ts"
       };
-    case "rebase-collision":
+    case "tempo-collision":
       return {
         operation: "collision",
         fingerprints: [
@@ -118,7 +118,7 @@ export function smokeInputForPipeline(name: RebasePipelineName): Record<string, 
         ],
         activeDecisions: []
       };
-    case "rebase-work-order":
+    case "tempo-work-order":
       return {
         operation: "work-order",
         conflicts: [smokeConflict()],
@@ -131,7 +131,7 @@ export function smokeInputForPipeline(name: RebasePipelineName): Record<string, 
         publications: [],
         existingWorkOrders: []
       };
-    case "rebase-merge-risk":
+    case "tempo-merge-risk":
       return {
         operation: "merge-risk",
         repoId: "smoke-repo",
@@ -186,7 +186,7 @@ export function smokeInputForPipeline(name: RebasePipelineName): Record<string, 
 function parseRocketRideOutput<T>(
   output: unknown,
   schema: z.ZodType<T>,
-  pipelineName: RebasePipelineName
+  pipelineName: TempoPipelineName
 ): T {
   for (const candidate of outputCandidates(output)) {
     const parsed = schema.safeParse(candidate);

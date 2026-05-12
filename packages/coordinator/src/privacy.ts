@@ -1,4 +1,4 @@
-import { createRebasePathFilter } from "./path-ignore.js";
+import { createTempoPathFilter } from "./path-ignore.js";
 
 export interface RedactionResult<T> {
   value: T;
@@ -12,7 +12,7 @@ const SECRET_PATTERNS = [
 ];
 
 export function redactForCloud<T>(value: T, repoRoot: string): RedactionResult<T> {
-  const filter = createRebasePathFilter(repoRoot);
+  const filter = createTempoPathFilter(repoRoot);
   const redactions = new Set<string>();
 
   function redactUnknown(input: unknown): unknown {

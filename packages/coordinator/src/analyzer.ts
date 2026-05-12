@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Fingerprint, RebaseConflict } from "@rebase/shared";
+import type { Fingerprint, TempoConflict } from "@tempo/shared";
 import {
   extractChangedFilesFromDiff,
   getWorktreeDiff,
@@ -13,7 +13,7 @@ import { createCompatibilityClassification } from "./compatibility.js";
 import { worktreeIdFor } from "./ids.js";
 import { createStructuredFingerprint } from "./openai-fingerprint.js";
 import { parseFingerprintRunOutput } from "./rocketride-contracts.js";
-import { createRebasePathFilter } from "./path-ignore.js";
+import { createTempoPathFilter } from "./path-ignore.js";
 import {
   isRocketRideRequired,
   runRocketRidePipeline,
@@ -28,7 +28,7 @@ export interface AnalyzeWorktreesInput {
 
 export interface AnalyzeWorktreesResult {
   fingerprints: Fingerprint[];
-  conflicts: RebaseConflict[];
+  conflicts: TempoConflict[];
   rocketRideRunIds: string[];
 }
 
@@ -38,7 +38,7 @@ export async function analyzeWorktreesOnce(
   const worktrees = await listWorktrees(input.repoRoot);
   const fingerprints: Fingerprint[] = [];
   const diffsByWorktreeId = new Map<string, string>();
-  const pathFilter = createRebasePathFilter(input.repoRoot);
+  const pathFilter = createTempoPathFilter(input.repoRoot);
   const rocketRideRunIds: string[] = [];
   const rocketRideRequired = isRocketRideRequired(input.rocketRide);
 
@@ -68,7 +68,7 @@ export async function analyzeWorktreesOnce(
     };
     const rocketRideRun = await runRocketRidePipeline(
       input.rocketRide,
-      "rebase-fingerprint",
+      "tempo-fingerprint",
       {
         ...fingerprintInput,
         repoRoot: input.repoRoot,

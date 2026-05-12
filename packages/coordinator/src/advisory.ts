@@ -1,9 +1,9 @@
-import type { Advisory, RebaseConflict } from "@rebase/shared";
-import { advisorySchema } from "@rebase/shared";
+import type { Advisory, TempoConflict } from "@tempo/shared";
+import { advisorySchema } from "@tempo/shared";
 import { stableId } from "./ids.js";
 
 export function createHeuristicAdvisory(
-  conflict: RebaseConflict,
+  conflict: TempoConflict,
   createdAt = Date.now()
 ): Advisory {
   const primarySurface = conflict.primarySurface;

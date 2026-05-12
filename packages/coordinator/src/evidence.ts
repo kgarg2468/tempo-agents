@@ -1,4 +1,4 @@
-import type { AgentSession, EvidencePacket, Fingerprint } from "@rebase/shared";
+import type { AgentSession, EvidencePacket, Fingerprint } from "@tempo/shared";
 import {
   extractChangedFilesFromDiff,
   getWorktreeDiff,
@@ -6,8 +6,8 @@ import {
   normalizeDiff
 } from "./git.js";
 import { stableId } from "./ids.js";
-import { createRebasePathFilter } from "./path-ignore.js";
-import type { RebaseStore } from "./store.js";
+import { createTempoPathFilter } from "./path-ignore.js";
+import type { TempoStore } from "./store.js";
 
 export const LOCAL_EVIDENCE_RETENTION_DAYS = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -15,7 +15,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export interface AssembleEvidencePacketInput {
   repoId: string;
   repoRoot: string;
-  store: RebaseStore;
+  store: TempoStore;
   session: AgentSession;
   now: number;
 }
@@ -94,7 +94,7 @@ async function collectGitEvidence(input: AssembleEvidencePacketInput): Promise<{
 
 async function safeFilteredDiff(repoRoot: string, cwd: string): Promise<string> {
   try {
-    const filter = createRebasePathFilter(repoRoot);
+    const filter = createTempoPathFilter(repoRoot);
     return filter.filterDiff(await getWorktreeDiff(cwd));
   } catch (_error) {
     return "";

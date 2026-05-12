@@ -1,11 +1,11 @@
-export const REQUIRED_REBASE_PIPELINES = [
-  "rebase-fingerprint",
-  "rebase-collision",
-  "rebase-work-order",
-  "rebase-merge-risk"
+export const REQUIRED_TEMPO_PIPELINES = [
+  "tempo-fingerprint",
+  "tempo-collision",
+  "tempo-work-order",
+  "tempo-merge-risk"
 ] as const;
 
-export type RebasePipelineName = (typeof REQUIRED_REBASE_PIPELINES)[number];
+export type TempoPipelineName = (typeof REQUIRED_TEMPO_PIPELINES)[number];
 
 export interface RocketRideStatus {
   mode: "required" | "disabled-dev";
@@ -30,7 +30,7 @@ export interface RocketRideCoordinator {
   status(): RocketRideStatus;
   validateRequiredPipelines?(): Promise<RocketRideStatus>;
   runPipeline(
-    name: RebasePipelineName,
+    name: TempoPipelineName,
     input: Record<string, unknown>
   ): Promise<RocketRidePipelineRun>;
 }
@@ -61,7 +61,7 @@ export function isRocketRideRequired(
 
 export async function runRocketRidePipeline(
   rocketRide: RocketRideCoordinator | undefined,
-  name: RebasePipelineName,
+  name: TempoPipelineName,
   input: Record<string, unknown>
 ): Promise<RocketRidePipelineRun | null> {
   if (!rocketRide || rocketRide.status().mode === "disabled-dev") return null;

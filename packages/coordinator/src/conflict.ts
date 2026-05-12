@@ -4,8 +4,8 @@ import type {
   Fingerprint,
   RiskLevel,
   SurfaceKind,
-  RebaseConflict
-} from "@rebase/shared";
+  TempoConflict
+} from "@tempo/shared";
 import { createHash } from "node:crypto";
 
 export interface DetectConflictOptions {
@@ -15,8 +15,8 @@ export interface DetectConflictOptions {
 export function detectConflicts(
   fingerprints: Fingerprint[],
   options: DetectConflictOptions = {}
-): RebaseConflict[] {
-  const conflicts: RebaseConflict[] = [];
+): TempoConflict[] {
+  const conflicts: TempoConflict[] = [];
   const sorted = [...fingerprints].sort((a, b) => a.id.localeCompare(b.id));
 
   for (let i = 0; i < sorted.length; i += 1) {
@@ -40,7 +40,7 @@ function compareFingerprints(
   left: Fingerprint,
   right: Fingerprint,
   classification?: CompatibilityClassification
-): RebaseConflict | null {
+): TempoConflict | null {
   const sharedSurfaceLabels = intersection(
     left.surfaces.map((surface) => surface.label),
     right.surfaces.map((surface) => surface.label)
@@ -99,7 +99,7 @@ function compareFingerprints(
       : `${assessment.primarySurface} overlap`;
   const summary =
     classification?.kind === "coordination_notice"
-      ? `Two worktrees are changing ${assessment.primarySurface}, but Rebase classified the overlap as compatible.`
+      ? `Two worktrees are changing ${assessment.primarySurface}, but Tempo classified the overlap as compatible.`
       : `Two worktrees are changing ${assessment.primarySurface}.`;
 
   return {
@@ -140,7 +140,7 @@ interface RiskAssessment {
   risk: RiskLevel;
   primarySurface: string;
   affectedSurfaces: string[];
-  riskReasons: RebaseConflict["riskReasons"];
+  riskReasons: TempoConflict["riskReasons"];
 }
 
 const CONTRACT_KINDS = new Set<SurfaceKind>([

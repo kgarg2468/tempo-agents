@@ -1,8 +1,8 @@
 import { PageHeader } from "../../../components/page-header";
-import { getRebaseSnapshot } from "../../../lib/rebase-api";
+import { getTempoSnapshot } from "../../../lib/tempo-api";
 
 export default async function InterventionsPage() {
-  const snapshot = await getRebaseSnapshot();
+  const snapshot = await getTempoSnapshot();
   const agentsById = new Map(snapshot.agents.map((agent) => [agent.id, agent]));
 
   return (
@@ -51,7 +51,7 @@ export default async function InterventionsPage() {
 
 function agentNames(
   ids: string[],
-  agentsById: Map<string, Awaited<ReturnType<typeof getRebaseSnapshot>>["agents"][number]>
+  agentsById: Map<string, Awaited<ReturnType<typeof getTempoSnapshot>>["agents"][number]>
 ): string {
   return ids
     .map((id) => agentsById.get(id)?.displayName ?? id)

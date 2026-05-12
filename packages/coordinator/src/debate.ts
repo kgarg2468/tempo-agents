@@ -1,12 +1,12 @@
 import type {
   DebateVerdict,
   Fingerprint,
-  RebaseConflict,
+  TempoConflict,
   TokenCostEstimate
-} from "@rebase/shared";
+} from "@tempo/shared";
 
 export function estimateTokenCost(
-  conflict: RebaseConflict,
+  conflict: TempoConflict,
   fingerprints: Fingerprint[]
 ): TokenCostEstimate {
   const affectedFingerprints = fingerprints.filter((fingerprint) =>
@@ -46,7 +46,7 @@ export function estimateTokenCost(
 }
 
 export function createLocalDebateVerdict(
-  conflict: RebaseConflict,
+  conflict: TempoConflict,
   fingerprints: Fingerprint[]
 ): DebateVerdict {
   const affectedSummaries = fingerprints
@@ -73,9 +73,9 @@ export function createLocalDebateVerdict(
 }
 
 export function withDebate(
-  conflict: RebaseConflict,
+  conflict: TempoConflict,
   fingerprints: Fingerprint[]
-): RebaseConflict {
+): TempoConflict {
   if (conflict.risk === "low") return conflict;
   return {
     ...conflict,
@@ -84,18 +84,18 @@ export function withDebate(
   };
 }
 
-function verdictFor(conflict: RebaseConflict): DebateVerdict["verdict"] {
+function verdictFor(conflict: TempoConflict): DebateVerdict["verdict"] {
   if (conflict.classification?.kind === "no_issue") return "compatible";
   if (conflict.classification?.kind === "coordination_notice") return "notice";
   return conflict.risk === "high" ? "blocking" : "notice";
 }
 
 function judgeLine(
-  conflict: RebaseConflict,
+  conflict: TempoConflict,
   verdict: DebateVerdict["verdict"]
 ): string {
   if (verdict === "compatible") {
-    return "Continue; no Rebase pause is needed for this overlap.";
+    return "Continue; no Tempo pause is needed for this overlap.";
   }
   if (verdict === "notice") {
     return "Continue with a checkpoint before commit and keep contract changes explicit.";
@@ -104,7 +104,7 @@ function judgeLine(
 }
 
 function directionsFor(
-  conflict: RebaseConflict,
+  conflict: TempoConflict,
   verdict: DebateVerdict["verdict"]
 ): string[] {
   if (verdict === "compatible") {

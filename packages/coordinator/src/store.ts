@@ -12,14 +12,14 @@ import type {
   HookEvent,
   Intervention,
   MergeRiskAssessment,
-  RebaseConflict,
-  RebaseEvent,
-  RebaseGraphEdge,
-  RebaseGraphNode,
-  RebaseRepo,
-  RebaseWorktree,
+  TempoConflict,
+  TempoEvent,
+  TempoGraphEdge,
+  TempoGraphNode,
+  TempoRepo,
+  TempoWorktree,
   WorkOrder
-} from "@rebase/shared";
+} from "@tempo/shared";
 import {
   agentSessionSchema,
   advisorySchema,
@@ -39,16 +39,16 @@ import {
   repoSchema,
   workOrderSchema,
   worktreeSchema
-} from "@rebase/shared";
+} from "@tempo/shared";
 
-export interface RebaseStore {
-  upsertRepo(repo: RebaseRepo): void;
-  getRepo(repoId: string): RebaseRepo | null;
-  upsertWorktree(worktree: RebaseWorktree): void;
+export interface TempoStore {
+  upsertRepo(repo: TempoRepo): void;
+  getRepo(repoId: string): TempoRepo | null;
+  upsertWorktree(worktree: TempoWorktree): void;
   markMissingWorktrees(repoId: string, activeWorktreeIds: string[], observedAt: number): void;
-  listWorktrees(repoId: string): RebaseWorktree[];
-  addEvent(event: RebaseEvent): void;
-  listEvents(repoId: string): RebaseEvent[];
+  listWorktrees(repoId: string): TempoWorktree[];
+  addEvent(event: TempoEvent): void;
+  listEvents(repoId: string): TempoEvent[];
   upsertHookEvent(event: HookEvent): void;
   listHookEvents(repoId: string, sessionId?: string): HookEvent[];
   upsertEvidencePacket(packet: EvidencePacket): void;
@@ -56,18 +56,18 @@ export interface RebaseStore {
   pruneExpiredEvidence(now: number): number;
   upsertCloudEscalationPacket(packet: CloudEscalationPacket): void;
   listCloudEscalationPackets(repoId: string): CloudEscalationPacket[];
-  upsertGraphNode(node: RebaseGraphNode): void;
-  upsertGraphEdge(edge: RebaseGraphEdge): void;
-  listGraphNodes(repoId: string): RebaseGraphNode[];
-  listGraphEdges(repoId: string): RebaseGraphEdge[];
+  upsertGraphNode(node: TempoGraphNode): void;
+  upsertGraphEdge(edge: TempoGraphEdge): void;
+  listGraphNodes(repoId: string): TempoGraphNode[];
+  listGraphEdges(repoId: string): TempoGraphEdge[];
   upsertFingerprint(fingerprint: Fingerprint): void;
   listFingerprints(repoId: string): Fingerprint[];
   upsertAgentSession(session: AgentSession): void;
   listAgentSessions(repoId: string): AgentSession[];
   updateAgentPlan(sessionId: string, plan: string, updatedAt: number): void;
   updateAgentCheckpoint(sessionId: string, updatedAt: number): void;
-  upsertConflict(conflict: RebaseConflict): void;
-  listConflicts(repoId: string): RebaseConflict[];
+  upsertConflict(conflict: TempoConflict): void;
+  listConflicts(repoId: string): TempoConflict[];
   updateConflictStatus(id: string, status: ConflictStatus, updatedAt: number): void;
   upsertCoordinationEpisode(episode: CoordinationEpisode): void;
   listCoordinationEpisodes(repoId: string): CoordinationEpisode[];
@@ -96,18 +96,18 @@ export interface RebaseStore {
   close(): void;
 }
 
-export function createRebaseStore(dbPath: string): RebaseStore {
+export function createTempoStore(dbPath: string): TempoStore {
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   migrate(db);
-  return new BetterSqliteRebaseStore(db);
+  return new BetterSqliteTempoStore(db);
 }
 
-class BetterSqliteRebaseStore implements RebaseStore {
+class BetterSqliteTempoStore implements TempoStore {
   constructor(private readonly db: Database.Database) {}
 
-  upsertRepo(repo: RebaseRepo): void {
+  upsertRepo(repo: TempoRepo): void {
     const parsed = repoSchema.parse(repo);
     this.db
       .prepare(
@@ -123,13 +123,13 @@ class BetterSqliteRebaseStore implements RebaseStore {
       .run(parsed);
   }
 
-  getRepo(repoId: string): RebaseRepo | null {
+  getRepo(repoId: string): TempoRepo | null {
     const row = this.db.prepare("select * from repos where id = ?").get(repoId);
     if (!row) return null;
     return repoSchema.parse(repoFromRow(row as RepoRow));
   }
 
-  upsertWorktree(worktree: RebaseWorktree): void {
+  upsertWorktree(worktree: TempoWorktree): void {
     const parsed = worktreeSchema.parse(worktree);
     this.db
       .prepare(
@@ -171,14 +171,14 @@ class BetterSqliteRebaseStore implements RebaseStore {
     }
   }
 
-  listWorktrees(repoId: string): RebaseWorktree[] {
+  listWorktrees(repoId: string): TempoWorktree[] {
     const rows = this.db
       .prepare("select * from worktrees where repo_id = ? order by path asc")
       .all(repoId) as WorktreeRow[];
     return rows.map((row) => worktreeSchema.parse(worktreeFromRow(row)));
   }
 
-  addEvent(event: RebaseEvent): void {
+  addEvent(event: TempoEvent): void {
     const parsed = eventSchema.parse(event);
     this.db
       .prepare(
@@ -190,7 +190,7 @@ class BetterSqliteRebaseStore implements RebaseStore {
       .run({ ...parsed, payloadJson: JSON.stringify(parsed.payload) });
   }
 
-  listEvents(repoId: string): RebaseEvent[] {
+  listEvents(repoId: string): TempoEvent[] {
     const rows = this.db
       .prepare("select * from events where repo_id = ? order by created_at asc")
       .all(repoId) as EventRow[];
@@ -348,7 +348,7 @@ class BetterSqliteRebaseStore implements RebaseStore {
     );
   }
 
-  upsertGraphNode(node: RebaseGraphNode): void {
+  upsertGraphNode(node: TempoGraphNode): void {
     const parsed = graphNodeSchema.parse(node);
     this.db
       .prepare(
@@ -370,7 +370,7 @@ class BetterSqliteRebaseStore implements RebaseStore {
       });
   }
 
-  upsertGraphEdge(edge: RebaseGraphEdge): void {
+  upsertGraphEdge(edge: TempoGraphEdge): void {
     const parsed = graphEdgeSchema.parse(edge);
     this.db
       .prepare(
@@ -393,14 +393,14 @@ class BetterSqliteRebaseStore implements RebaseStore {
       });
   }
 
-  listGraphNodes(repoId: string): RebaseGraphNode[] {
+  listGraphNodes(repoId: string): TempoGraphNode[] {
     const rows = this.db
       .prepare("select * from graph_nodes where repo_id = ? order by kind asc, label asc")
       .all(repoId) as GraphNodeRow[];
     return rows.map((row) => graphNodeSchema.parse(graphNodeFromRow(row)));
   }
 
-  listGraphEdges(repoId: string): RebaseGraphEdge[] {
+  listGraphEdges(repoId: string): TempoGraphEdge[] {
     const rows = this.db
       .prepare("select * from graph_edges where repo_id = ? order by kind asc, id asc")
       .all(repoId) as GraphEdgeRow[];
@@ -491,7 +491,7 @@ class BetterSqliteRebaseStore implements RebaseStore {
       .run(updatedAt, sessionId);
   }
 
-  upsertConflict(conflict: RebaseConflict): void {
+  upsertConflict(conflict: TempoConflict): void {
     const parsed = conflictSchema.parse(conflict);
     this.db
       .prepare(
@@ -542,9 +542,50 @@ class BetterSqliteRebaseStore implements RebaseStore {
           : null,
         debateJson: parsed.debate ? JSON.stringify(parsed.debate) : null
       });
+    this.upsertGraphNode({
+      id: `conflict:${parsed.id}`,
+      repoId: parsed.repoId,
+      kind: "conflict",
+      label: parsed.title,
+      refId: parsed.id,
+      metadata: {
+        risk: parsed.risk,
+        status: parsed.status,
+        primarySurface: parsed.primarySurface,
+        type: parsed.type,
+        confidence: parsed.confidence
+      },
+      updatedAt: parsed.updatedAt
+    });
+    for (const worktreeId of parsed.affectedWorktreeIds) {
+      this.upsertGraphEdge({
+        id: `conflict:${parsed.id}->worktree:${worktreeId}`,
+        repoId: parsed.repoId,
+        sourceId: `conflict:${parsed.id}`,
+        targetId: `worktree:${worktreeId}`,
+        kind: "affects",
+        metadata: {
+          risk: parsed.risk
+        },
+        updatedAt: parsed.updatedAt
+      });
+    }
+    for (const surface of parsed.affectedSurfaces) {
+      this.upsertGraphEdge({
+        id: `conflict:${parsed.id}->surface:${graphSurfaceId(surface)}`,
+        repoId: parsed.repoId,
+        sourceId: `conflict:${parsed.id}`,
+        targetId: `surface:${graphSurfaceId(surface)}`,
+        kind: "affects",
+        metadata: {
+          risk: parsed.risk
+        },
+        updatedAt: parsed.updatedAt
+      });
+    }
   }
 
-  listConflicts(repoId: string): RebaseConflict[] {
+  listConflicts(repoId: string): TempoConflict[] {
     const rows = this.db
       .prepare("select * from conflicts where repo_id = ? order by updated_at desc")
       .all(repoId) as ConflictRow[];
@@ -603,6 +644,44 @@ class BetterSqliteRebaseStore implements RebaseStore {
           : null,
         rocketRideRunIdsJson: JSON.stringify(parsed.rocketRideRunIds)
       });
+    this.upsertGraphNode({
+      id: `episode:${parsed.id}`,
+      repoId: parsed.repoId,
+      kind: "episode",
+      label: parsed.surface,
+      refId: parsed.id,
+      metadata: {
+        status: parsed.status,
+        risk: parsed.risk,
+        confidence: parsed.confidence,
+        ownerAgentSessionId: parsed.ownerAgentSessionId ?? null
+      },
+      updatedAt: parsed.updatedAt
+    });
+    for (const conflictId of parsed.conflictIds) {
+      this.upsertGraphEdge({
+        id: `episode:${parsed.id}->conflict:${conflictId}`,
+        repoId: parsed.repoId,
+        sourceId: `episode:${parsed.id}`,
+        targetId: `conflict:${conflictId}`,
+        kind: "relates_to",
+        metadata: {},
+        updatedAt: parsed.updatedAt
+      });
+    }
+    for (const agentSessionId of parsed.affectedAgentSessionIds) {
+      this.upsertGraphEdge({
+        id: `episode:${parsed.id}->agent:${agentSessionId}`,
+        repoId: parsed.repoId,
+        sourceId: `episode:${parsed.id}`,
+        targetId: `agent:${agentSessionId}`,
+        kind: "relates_to",
+        metadata: {
+          owner: parsed.ownerAgentSessionId === agentSessionId
+        },
+        updatedAt: parsed.updatedAt
+      });
+    }
   }
 
   listCoordinationEpisodes(repoId: string): CoordinationEpisode[] {
@@ -695,13 +774,15 @@ class BetterSqliteRebaseStore implements RebaseStore {
         `
         insert into work_orders (
           id, repo_id, episode_id, agent_session_id, role, status, revision,
-          title, summary, required_contract, allowed_files_json,
+          title, summary, required_contract, required_snapshot_publication_id,
+          required_feature_terms_json, allowed_files_json,
           blocked_files_json, shared_files_json, next_checkpoint,
           created_at, updated_at, delivered_at, acknowledged_at
         )
         values (
           @id, @repoId, @episodeId, @agentSessionId, @role, @status, @revision,
-          @title, @summary, @requiredContract, @allowedFilesJson,
+          @title, @summary, @requiredContract, @requiredSnapshotPublicationId,
+          @requiredFeatureTermsJson, @allowedFilesJson,
           @blockedFilesJson, @sharedFilesJson, @nextCheckpoint,
           @createdAt, @updatedAt, @deliveredAt, @acknowledgedAt
         )
@@ -715,6 +796,8 @@ class BetterSqliteRebaseStore implements RebaseStore {
           title = excluded.title,
           summary = excluded.summary,
           required_contract = excluded.required_contract,
+          required_snapshot_publication_id = excluded.required_snapshot_publication_id,
+          required_feature_terms_json = excluded.required_feature_terms_json,
           allowed_files_json = excluded.allowed_files_json,
           blocked_files_json = excluded.blocked_files_json,
           shared_files_json = excluded.shared_files_json,
@@ -725,6 +808,8 @@ class BetterSqliteRebaseStore implements RebaseStore {
       .run({
         ...parsed,
         requiredContract: parsed.requiredContract ?? null,
+        requiredSnapshotPublicationId: parsed.requiredSnapshotPublicationId ?? null,
+        requiredFeatureTermsJson: JSON.stringify(parsed.requiredFeatureTerms ?? []),
         allowedFilesJson: JSON.stringify(parsed.allowedFiles),
         blockedFilesJson: JSON.stringify(parsed.blockedFiles),
         sharedFilesJson: JSON.stringify(parsed.sharedFiles),
@@ -750,6 +835,57 @@ class BetterSqliteRebaseStore implements RebaseStore {
         parsed.agentSessionId,
         parsed.revision
       );
+    this.upsertWorkOrderGraph(parsed);
+  }
+
+  private upsertWorkOrderGraph(workOrder: WorkOrder): void {
+    this.upsertGraphNode({
+      id: `work_order:${workOrder.id}`,
+      repoId: workOrder.repoId,
+      kind: "work_order",
+      label: workOrder.title,
+      refId: workOrder.id,
+      metadata: {
+        episodeId: workOrder.episodeId,
+        agentSessionId: workOrder.agentSessionId,
+        role: workOrder.role,
+        status: workOrder.status,
+        revision: workOrder.revision
+      },
+      updatedAt: workOrder.updatedAt
+    });
+    this.upsertGraphEdge({
+      id: `work_order:${workOrder.id}->episode:${workOrder.episodeId}`,
+      repoId: workOrder.repoId,
+      sourceId: `work_order:${workOrder.id}`,
+      targetId: `episode:${workOrder.episodeId}`,
+      kind: "relates_to",
+      metadata: {
+        role: workOrder.role,
+        status: workOrder.status
+      },
+      updatedAt: workOrder.updatedAt
+    });
+    this.upsertGraphEdge({
+      id: `work_order:${workOrder.id}->agent:${workOrder.agentSessionId}`,
+      repoId: workOrder.repoId,
+      sourceId: `work_order:${workOrder.id}`,
+      targetId: `agent:${workOrder.agentSessionId}`,
+      kind: "relates_to",
+      metadata: {
+        role: workOrder.role,
+        status: workOrder.status
+      },
+      updatedAt: workOrder.updatedAt
+    });
+  }
+
+  private refreshWorkOrderGraph(id: string): void {
+    const row = this.db
+      .prepare("select * from work_orders where id = ?")
+      .get(id) as WorkOrderRow | undefined;
+    if (!row) return;
+    this.upsertWorkOrderGraph(workOrderSchema.parse(workOrderFromRow(row)));
   }
 
   listWorkOrders(repoId: string): WorkOrder[] {
@@ -781,6 +917,7 @@ class BetterSqliteRebaseStore implements RebaseStore {
     this.db
       .prepare("update work_orders set status = 'fetched', delivered_at = ? where id = ?")
       .run(fetchedAt, id);
+    this.refreshWorkOrderGraph(id);
   }
 
   markWorkOrderAcknowledged(id: string, acknowledgedAt: number): void {
@@ -789,12 +926,14 @@ class BetterSqliteRebaseStore implements RebaseStore {
         "update work_orders set status = 'acknowledged', acknowledged_at = ? where id = ?"
       )
       .run(acknowledgedAt, id);
+    this.refreshWorkOrderGraph(id);
   }
 
   markWorkOrderCompleted(id: string, completedAt: number): void {
     this.db
       .prepare("update work_orders set status = 'completed', updated_at = ? where id = ?")
       .run(completedAt, id);
+    this.refreshWorkOrderGraph(id);
   }
 
   upsertConflictDecision(decision: ConflictDecision): void {
@@ -902,22 +1041,58 @@ class BetterSqliteRebaseStore implements RebaseStore {
         `
         insert into contract_publications (
           id, repo_id, conflict_id, owner_agent_session_id, surface,
-          shape_summary, files_json, created_at
+          shape_summary, files_json, snapshot_set_id, file_snapshots_json, created_at
         )
         values (
           @id, @repoId, @conflictId, @ownerAgentSessionId, @surface,
-          @shapeSummary, @filesJson, @createdAt
+          @shapeSummary, @filesJson, @snapshotSetId, @fileSnapshotsJson, @createdAt
         )
         on conflict(id) do update set
           surface = excluded.surface,
           shape_summary = excluded.shape_summary,
-          files_json = excluded.files_json
+          files_json = excluded.files_json,
+          snapshot_set_id = excluded.snapshot_set_id,
+          file_snapshots_json = excluded.file_snapshots_json
       `
       )
       .run({
         ...parsed,
-        filesJson: JSON.stringify(parsed.files)
+        filesJson: JSON.stringify(parsed.files),
+        snapshotSetId: parsed.snapshotSetId ?? null,
+        fileSnapshotsJson: JSON.stringify(parsed.fileSnapshots ?? [])
       });
+    this.upsertGraphNode({
+      id: `publication:${parsed.id}`,
+      repoId: parsed.repoId,
+      kind: "publication",
+      label: `Published ${parsed.surface}`,
+      refId: parsed.id,
+      metadata: {
+        conflictId: parsed.conflictId,
+        ownerAgentSessionId: parsed.ownerAgentSessionId,
+        surface: parsed.surface,
+        shapeSummary: parsed.shapeSummary,
+        files: parsed.files,
+        snapshotSetId: parsed.snapshotSetId ?? null
+      },
+      updatedAt: parsed.createdAt
+    });
+    const episode = this.listCoordinationEpisodes(parsed.repoId).find((candidate) =>
+      candidate.conflictIds.includes(parsed.conflictId)
+    );
+    this.upsertGraphEdge({
+      id: episode
+        ? `publication:${parsed.id}->episode:${episode.id}`
+        : `publication:${parsed.id}->conflict:${parsed.conflictId}`,
+      repoId: parsed.repoId,
+      sourceId: `publication:${parsed.id}`,
+      targetId: episode ? `episode:${episode.id}` : `conflict:${parsed.conflictId}`,
+      kind: "relates_to",
+      metadata: {
+        surface: parsed.surface
+      },
+      updatedAt: parsed.createdAt
+    });
   }
 
   listContractPublications(repoId: string): ContractPublication[] {
@@ -1106,6 +1281,8 @@ function migrate(db: Database.Database): void {
       title text not null,
       summary text not null,
       required_contract text,
+      required_snapshot_publication_id text,
+      required_feature_terms_json text not null default '[]',
       allowed_files_json text not null,
       blocked_files_json text not null,
       shared_files_json text not null,
@@ -1163,6 +1340,8 @@ function migrate(db: Database.Database): void {
       surface text not null,
       shape_summary text not null,
       files_json text not null,
+      snapshot_set_id text,
+      file_snapshots_json text not null default '[]',
       created_at integer not null
     );
 
@@ -1322,6 +1501,30 @@ function migrate(db: Database.Database): void {
     "coordination_role",
     "coordination_role text not null default 'feature'"
   );
+  addColumnIfMissing(
+    db,
+    "work_orders",
+    "required_snapshot_publication_id",
+    "required_snapshot_publication_id text"
+  );
+  addColumnIfMissing(
+    db,
+    "work_orders",
+    "required_feature_terms_json",
+    "required_feature_terms_json text not null default '[]'"
+  );
+  addColumnIfMissing(
+    db,
+    "contract_publications",
+    "snapshot_set_id",
+    "snapshot_set_id text"
+  );
+  addColumnIfMissing(
+    db,
+    "contract_publications",
+    "file_snapshots_json",
+    "file_snapshots_json text not null default '[]'"
+  );
 }
 
 function addColumnIfMissing(
@@ -1346,7 +1549,7 @@ interface RepoRow {
   updated_at: number;
 }
 
-function repoFromRow(row: RepoRow): RebaseRepo {
+function repoFromRow(row: RepoRow): TempoRepo {
   return {
     id: row.id,
     rootPath: row.root_path,
@@ -1417,7 +1620,7 @@ interface CloudEscalationPacketRow {
 interface GraphNodeRow {
   id: string;
   repo_id: string;
-  kind: RebaseGraphNode["kind"];
+  kind: TempoGraphNode["kind"];
   label: string;
   ref_id: string | null;
   metadata_json: string;
@@ -1429,7 +1632,7 @@ interface GraphEdgeRow {
   repo_id: string;
   source_id: string;
   target_id: string;
-  kind: RebaseGraphEdge["kind"];
+  kind: TempoGraphEdge["kind"];
   metadata_json: string;
   updated_at: number;
 }
@@ -1441,11 +1644,11 @@ interface WorktreeRow {
   branch: string | null;
   head_sha: string | null;
   dirty: number;
-  status: RebaseWorktree["status"];
+  status: TempoWorktree["status"];
   last_observed_at: number;
 }
 
-function worktreeFromRow(row: WorktreeRow): RebaseWorktree {
+function worktreeFromRow(row: WorktreeRow): TempoWorktree {
   return {
     id: row.id,
     repoId: row.repo_id,
@@ -1458,7 +1661,7 @@ function worktreeFromRow(row: WorktreeRow): RebaseWorktree {
   };
 }
 
-function eventFromRow(row: EventRow): RebaseEvent {
+function eventFromRow(row: EventRow): TempoEvent {
   return {
     id: row.id,
     repoId: row.repo_id,
@@ -1531,7 +1734,7 @@ function cloudEscalationPacketFromRow(
   };
 }
 
-function graphNodeFromRow(row: GraphNodeRow): RebaseGraphNode {
+function graphNodeFromRow(row: GraphNodeRow): TempoGraphNode {
   return {
     id: row.id,
     repoId: row.repo_id,
@@ -1543,7 +1746,7 @@ function graphNodeFromRow(row: GraphNodeRow): RebaseGraphNode {
   };
 }
 
-function graphEdgeFromRow(row: GraphEdgeRow): RebaseGraphEdge {
+function graphEdgeFromRow(row: GraphEdgeRow): TempoGraphEdge {
   return {
     id: row.id,
     repoId: row.repo_id,
@@ -1559,9 +1762,9 @@ interface ConflictRow {
   id: string;
   repo_id: string;
   status: ConflictStatus;
-  risk: RebaseConflict["risk"];
+  risk: TempoConflict["risk"];
   confidence: number;
-  type: RebaseConflict["type"];
+  type: TempoConflict["type"];
   title: string;
   summary: string;
   primary_surface: string;
@@ -1604,6 +1807,8 @@ interface WorkOrderRow {
   title: string;
   summary: string;
   required_contract: string | null;
+  required_snapshot_publication_id: string | null;
+  required_feature_terms_json: string;
   allowed_files_json: string;
   blocked_files_json: string;
   shared_files_json: string;
@@ -1630,7 +1835,7 @@ interface MergeRiskAssessmentRow {
   created_at: number;
 }
 
-function conflictFromRow(row: ConflictRow): RebaseConflict {
+function conflictFromRow(row: ConflictRow): TempoConflict {
   return {
     id: row.id,
     repoId: row.repo_id,
@@ -1644,23 +1849,23 @@ function conflictFromRow(row: ConflictRow): RebaseConflict {
     affectedWorktreeIds: JSON.parse(row.affected_worktree_ids_json) as string[],
     affectedSurfaces: JSON.parse(row.affected_surfaces_json) as string[],
     evidence: JSON.parse(row.evidence_json) as string[],
-    riskReasons: JSON.parse(row.risk_reasons_json) as RebaseConflict["riskReasons"],
+    riskReasons: JSON.parse(row.risk_reasons_json) as TempoConflict["riskReasons"],
     ...(row.classification_json
       ? {
           classification: JSON.parse(
             row.classification_json
-          ) as RebaseConflict["classification"]
+          ) as TempoConflict["classification"]
         }
       : {}),
     ...(row.token_cost_estimate_json
       ? {
           tokenCostEstimate: JSON.parse(
             row.token_cost_estimate_json
-          ) as RebaseConflict["tokenCostEstimate"]
+          ) as TempoConflict["tokenCostEstimate"]
         }
       : {}),
     ...(row.debate_json
-      ? { debate: JSON.parse(row.debate_json) as RebaseConflict["debate"] }
+      ? { debate: JSON.parse(row.debate_json) as TempoConflict["debate"] }
       : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -1710,6 +1915,10 @@ function workOrderFromRow(row: WorkOrderRow): WorkOrder {
     title: row.title,
     summary: row.summary,
     ...(row.required_contract ? { requiredContract: row.required_contract } : {}),
+    ...(row.required_snapshot_publication_id
+      ? { requiredSnapshotPublicationId: row.required_snapshot_publication_id }
+      : {}),
+    requiredFeatureTerms: JSON.parse(row.required_feature_terms_json) as string[],
     allowedFiles: JSON.parse(row.allowed_files_json) as string[],
     blockedFiles: JSON.parse(row.blocked_files_json) as string[],
     sharedFiles: JSON.parse(row.shared_files_json) as string[],
@@ -1853,6 +2062,8 @@ interface ContractPublicationRow {
   surface: string;
   shape_summary: string;
   files_json: string;
+  snapshot_set_id: string | null;
+  file_snapshots_json: string;
   created_at: number;
 }
 
@@ -1896,8 +2107,17 @@ function contractPublicationFromRow(
     surface: row.surface,
     shapeSummary: row.shape_summary,
     files: JSON.parse(row.files_json) as string[],
+    ...(row.snapshot_set_id ? { snapshotSetId: row.snapshot_set_id } : {}),
+    fileSnapshots: JSON.parse(row.file_snapshots_json) as ContractPublication["fileSnapshots"],
     createdAt: row.created_at
   };
+}
+
+function graphSurfaceId(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function interventionFromRow(row: InterventionRow): Intervention {

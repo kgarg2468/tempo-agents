@@ -1,16 +1,16 @@
 {
-  "name": "rebase-ai-monorepo",
+  "name": "tempo-ai-monorepo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --filter @rebase/dashboard dev",
+    "dev": "pnpm --filter @tempo/dashboard dev",
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "rebase": "node packages/cli/dist/index.js",
+    "tempo": "node packages/cli/dist/index.js",
     "submission:readiness": "scripts/submission-readiness.sh"
   },
   "pnpm": {

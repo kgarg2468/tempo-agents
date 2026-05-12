@@ -1,8 +1,8 @@
 import { PageHeader } from "../../../components/page-header";
-import { getRebaseSnapshot } from "../../../lib/rebase-api";
+import { getTempoSnapshot } from "../../../lib/tempo-api";
 
 export default async function AgentsPage() {
-  const snapshot = await getRebaseSnapshot();
+  const snapshot = await getTempoSnapshot();
   const joinedWorktrees = new Set(
     snapshot.agents.map((agent) => agent.worktreeId).filter(Boolean)
   );

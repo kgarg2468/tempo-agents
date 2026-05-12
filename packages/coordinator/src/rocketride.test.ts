@@ -6,7 +6,7 @@ describe("runRocketRidePipeline", () => {
     await expect(
       runRocketRidePipeline(
         createDisabledRocketRideCoordinator(),
-        "rebase-fingerprint",
+        "tempo-fingerprint",
         {}
       )
     ).resolves.toBeNull();
@@ -28,7 +28,7 @@ describe("runRocketRidePipeline", () => {
             throw new Error("pipeline failed");
           }
         },
-        "rebase-fingerprint",
+        "tempo-fingerprint",
         {}
       )
     ).rejects.toThrow("pipeline failed");

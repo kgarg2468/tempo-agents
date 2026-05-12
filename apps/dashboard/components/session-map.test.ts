@@ -1,77 +1,92 @@
 import { describe, expect, it } from "vitest";
-import type { Fingerprint, RebaseConflict } from "@rebase/shared";
-import {
-  activeSessionConflict,
-  surfaceLabelsForSessionGraph,
-  targetSurfacesForFingerprint
-} from "./session-graph";
-
-const fingerprint: Fingerprint = {
-  id: "fp-1",
-  repoId: "repo-1",
-  worktreeId: "wt-main",
-  diffHash: "diff-1",
-  createdAt: 1778000000000,
-  filesTouched: ["src/shared/task.ts"],
-  symbols: { added: [], modified: ["Task"], removed: [] },
-  surfaces: [
-    {
-      id: "task-type",
-      label: "Task type",
-      kind: "type",
-      files: ["src/shared/task.ts"],
-      confidence: 0.8,
-      evidence: ["type path"]
-    }
-  ],
-  semanticSummary: "Task changed.",
-  contractChanges: ["Task type"],
-  confidence: 0.8,
-  source: "heuristic"
-};
-
-const activeConflictFixture: RebaseConflict = {
-  id: "conflict-1",
-  repoId: "repo-1",
-  status: "open",
-  risk: "high",
-  confidence: 0.8,
-  type: "type",
-  title: "Task contract overlap",
-  summary: "Two worktrees touched Task contract.",
-  primarySurface: "Task contract",
-  affectedWorktreeIds: ["wt-main"],
-  affectedSurfaces: ["Task type"],
-  evidence: ["Both fingerprints touch Task type"],
-  riskReasons: [],
-  createdAt: 1778000000000,
-  updatedAt: 1778000000000
-};
+import type { TempoGraphEdge, TempoGraphNode } from "@tempo/shared";
+import { flowFromTempoGraph } from "./session-flow";
 
 describe("SessionMap graph", () => {
-  it("does not render fingerprint surface nodes when there is no active conflict", () => {
-    const activeConflict = activeSessionConflict([]);
-
-    expect(
-      surfaceLabelsForSessionGraph({
-        fingerprints: [fingerprint],
-        conflicts: []
+  it("renders canonical Tempo graph nodes for conflicts, episodes, work orders, and publications", () => {
+    const nodes: TempoGraphNode[] = [
+      graphNode("repo:repo-1", "repo", "todo-demo"),
+      graphNode("worktree:wt-labels", "worktree", "codex-labels", {
+        dirty: true
+      }),
+      graphNode("worktree:wt-notes", "worktree", "codex-notes", {
+        dirty: true
+      }),
+      graphNode("agent:agent-labels", "agent", "Agent A"),
+      graphNode("conflict:conflict-1", "conflict", "Task contract overlap", {
+        risk: "high"
+      }),
+      graphNode("episode:episode-1", "episode", "Task contract", {
+        status: "coordinating"
+      }),
+      graphNode("work_order:order-1", "work_order", "Adapt to Task contract", {
+        role: "adapter",
+        status: "queued"
+      }),
+      graphNode("publication:pub-1", "publication", "Published Task contract", {
+        surface: "Task contract"
       })
-    ).toEqual([]);
-    expect(targetSurfacesForFingerprint(fingerprint, activeConflict)).toEqual([]);
-  });
+    ];
+    const edges: TempoGraphEdge[] = [
+      graphEdge("repo:repo-1", "worktree:wt-labels", "contains"),
+      graphEdge("repo:repo-1", "worktree:wt-notes", "contains"),
+      graphEdge("conflict:conflict-1", "worktree:wt-labels", "affects"),
+      graphEdge("conflict:conflict-1", "worktree:wt-notes", "affects"),
+      graphEdge("episode:episode-1", "conflict:conflict-1", "relates_to"),
+      graphEdge("work_order:order-1", "episode:episode-1", "relates_to"),
+      graphEdge("publication:pub-1", "episode:episode-1", "relates_to")
+    ];
 
-  it("renders the primary surface when there is an active conflict", () => {
-    const activeConflict = activeSessionConflict([activeConflictFixture]);
+    const flow = flowFromTempoGraph({ nodes, edges });
 
-    expect(
-      surfaceLabelsForSessionGraph({
-        fingerprints: [fingerprint],
-        conflicts: [activeConflictFixture]
-      })
-    ).toEqual(["Task contract"]);
-    expect(targetSurfacesForFingerprint(fingerprint, activeConflict)).toEqual(
-      ["Task contract"]
+    expect(flow.nodes.map((node) => node.id)).toEqual(
+      expect.arrayContaining([
+        "conflict:conflict-1",
+        "episode:episode-1",
+        "work_order:order-1",
+        "publication:pub-1"
+      ])
     );
+    expect(
+      flow.nodes.find((node) => node.id === "conflict:conflict-1")?.className
+    ).toContain("tempo-node-risk");
+    expect(flow.edges.map((edge) => edge.id)).toContain(
+      "publication:pub-1->episode:episode-1"
+    );
+    expect(flow.nodes.find((node) => node.id === "worktree:wt-labels")?.position.y)
+      .not.toBe(flow.nodes.find((node) => node.id === "agent:agent-labels")?.position.y);
   });
 });
+
+function graphNode(
+  id: string,
+  kind: TempoGraphNode["kind"],
+  label: string,
+  metadata: TempoGraphNode["metadata"] = {}
+): TempoGraphNode {
+  return {
+    id,
+    repoId: "repo-1",
+    kind,
+    label,
+    refId: id,
+    metadata,
+    updatedAt: 1778000000000
+  };
+}
+
+function graphEdge(
+  sourceId: string,
+  targetId: string,
+  kind: TempoGraphEdge["kind"]
+): TempoGraphEdge {
+  return {
+    id: `${sourceId}->${targetId}`,
+    repoId: "repo-1",
+    sourceId,
+    targetId,
+    kind,
+    metadata: {},
+    updatedAt: 1778000000000
+  };
+}

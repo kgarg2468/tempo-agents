@@ -11,17 +11,17 @@ import type {
   AgentSession,
   Fingerprint,
   HookEvent,
-  RebaseConflict,
-  RebaseEvent,
-  RebaseWorktree
-} from "@rebase/shared";
-import { hookEventKindSchema } from "@rebase/shared";
+  TempoConflict,
+  TempoEvent,
+  TempoWorktree
+} from "@tempo/shared";
+import { hookEventKindSchema } from "@tempo/shared";
 import { findGitRoot } from "./git.js";
-import { createRebaseStore, type RebaseStore } from "./store.js";
+import { createTempoStore, type TempoStore } from "./store.js";
 import { repoIdFor, stableId, worktreeIdFor } from "./ids.js";
 import { createMcpToolHandlers } from "./mcp-tools.js";
-import { registerRebaseMcp } from "./mcp.js";
-import { createRebaseWatcher, type RebaseWatcher } from "./watcher.js";
+import { registerTempoMcp } from "./mcp.js";
+import { createTempoWatcher, type TempoWatcher } from "./watcher.js";
 import {
   createDisabledRocketRideCoordinator,
   type RocketRideCoordinator
@@ -47,7 +47,7 @@ export async function createCoordinatorApp(
 ): Promise<FastifyInstance> {
   await mkdir(path.dirname(options.dbPath), { recursive: true });
   const repoRoot = await findGitRoot(options.repoRoot);
-  const store = createRebaseStore(options.dbPath);
+  const store = createTempoStore(options.dbPath);
   const rocketRide =
     options.rocketRide ??
     createDisabledRocketRideCoordinator(
@@ -82,7 +82,7 @@ export async function createCoordinatorApp(
       subscriber(event);
     }
   };
-  const watcher = createRebaseWatcher({
+  const watcher = createTempoWatcher({
     repoRoot,
     repoId,
     store,
@@ -98,7 +98,7 @@ export async function createCoordinatorApp(
     store.close();
   });
 
-  app.decorate("rebase", {
+  app.decorate("tempo", {
     repoRoot,
     repoId,
     token: options.token,
@@ -247,7 +247,7 @@ export async function createCoordinatorApp(
     store,
     rocketRide
   });
-  registerRebaseMcp(app, { repoId, repoRoot, store, rocketRide });
+  registerTempoMcp(app, { repoId, repoRoot, store, rocketRide });
 
   app.post("/api/analyze", { preHandler: tokenAuth }, async () => {
     const result = await watcher.scanOnce();
@@ -308,7 +308,7 @@ export async function createCoordinatorApp(
       });
       store.upsertEvidencePacket(packet);
       const prunedEvidencePackets = store.pruneExpiredEvidence(receivedAt);
-      const runtimeEvent: RebaseEvent = {
+      const runtimeEvent: TempoEvent = {
         id: eventId("hook.codex.received", receivedAt),
         repoId,
         type: "hook.codex.received",
@@ -525,11 +525,11 @@ export async function createCoordinatorApp(
 }
 
 async function tokenAuth(request: FastifyRequest, reply: FastifyReply) {
-  const expected = request.server.rebase.token;
+  const expected = request.server.tempo.token;
   const header = request.headers.authorization;
   const actual = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
   if (actual !== expected) {
-    await reply.code(401).send({ error: "Rebase local token required" });
+    await reply.code(401).send({ error: "Tempo local token required" });
   }
 }
 
@@ -550,7 +550,7 @@ const codexHookBodySchema = z.object({
 
 function upsertHookSession(input: {
   repoId: string;
-  store: RebaseStore;
+  store: TempoStore;
   cwd: string;
   now: number;
   sessionId?: string | undefined;
@@ -598,16 +598,16 @@ function upsertHookSession(input: {
 }
 
 function listLiveWorktrees(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string
-): RebaseWorktree[] {
+): TempoWorktree[] {
   return store
     .listWorktrees(repoId)
     .filter((worktree) => worktree.status !== "missing");
 }
 
 function listLiveAgentSessions(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   runtimeStartedAt: number
 ): AgentSession[] {
@@ -626,7 +626,7 @@ function listLiveAgentSessions(
 }
 
 function listLiveFingerprints(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string
 ): Fingerprint[] {
   const dirtyWorktreeIds = liveDirtyWorktreeIds(store, repoId);
@@ -642,9 +642,9 @@ function listLiveFingerprints(
 }
 
 function listLiveConflicts(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string
-): RebaseConflict[] {
+): TempoConflict[] {
   const dirtyWorktreeIds = liveDirtyWorktreeIds(store, repoId);
   return store
     .listConflicts(repoId)
@@ -659,11 +659,11 @@ function listLiveConflicts(
     .map((conflict) => withIntegrationNotice(store, repoId, conflict));
 }
 
-function liveConflictIds(store: RebaseStore, repoId: string): Set<string> {
+function liveConflictIds(store: TempoStore, repoId: string): Set<string> {
   return new Set(listLiveConflicts(store, repoId).map((conflict) => conflict.id));
 }
 
-function liveDirtyWorktreeIds(store: RebaseStore, repoId: string): Set<string> {
+function liveDirtyWorktreeIds(store: TempoStore, repoId: string): Set<string> {
   return new Set(
     listLiveWorktrees(store, repoId)
       .filter((worktree) => worktree.dirty)
@@ -672,10 +672,10 @@ function liveDirtyWorktreeIds(store: RebaseStore, repoId: string): Set<string> {
 }
 
 function withIntegrationNotice(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
-  conflict: RebaseConflict
-): RebaseConflict {
+  conflict: TempoConflict
+): TempoConflict {
   if (!conflictIncludesIntegrationSession(store, repoId, conflict)) return conflict;
   return {
     ...conflict,
@@ -694,7 +694,7 @@ function withIntegrationNotice(
       {
         label: "Integration session",
         detail:
-          "Rebase is treating this overlap as final integration rather than parallel feature work.",
+          "Tempo is treating this overlap as final integration rather than parallel feature work.",
         weight: 20
       }
     ]
@@ -702,9 +702,9 @@ function withIntegrationNotice(
 }
 
 function conflictIncludesIntegrationSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
-  conflict: RebaseConflict
+  conflict: TempoConflict
 ): boolean {
   const affectedWorktrees = new Set(conflict.affectedWorktreeIds);
   return store
@@ -718,10 +718,10 @@ function conflictIncludesIntegrationSession(
 }
 
 function listRuntimeEvents(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   runtimeStartedAt: number
-): RebaseEvent[] {
+): TempoEvent[] {
   return store
     .listEvents(repoId)
     .filter((event) => event.createdAt >= runtimeStartedAt);
@@ -738,12 +738,12 @@ function localUrl(request: FastifyRequest, pathname: string): string {
 
 declare module "fastify" {
   interface FastifyInstance {
-    rebase: {
+    tempo: {
       repoRoot: string;
       repoId: string;
       token: string;
-      store: RebaseStore;
-      watcher: RebaseWatcher;
+      store: TempoStore;
+      watcher: TempoWatcher;
       rocketRide: RocketRideCoordinator;
     };
   }

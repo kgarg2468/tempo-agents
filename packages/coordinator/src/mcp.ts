@@ -6,7 +6,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import * as z from "zod/v4";
 import { createMcpToolHandlers, type McpToolContext } from "./mcp-tools.js";
 
-export function registerRebaseMcp(app: FastifyInstance, context: McpToolContext): void {
+export function registerTempoMcp(app: FastifyInstance, context: McpToolContext): void {
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
   app.post("/mcp", async (request, reply) => {
@@ -26,7 +26,7 @@ export function registerRebaseMcp(app: FastifyInstance, context: McpToolContext)
         const closedSessionId = transport?.sessionId;
         if (closedSessionId) transports.delete(closedSessionId);
       };
-      const server = createRebaseMcpServer(context);
+      const server = createTempoMcpServer(context);
       await server.connect(transport as Parameters<typeof server.connect>[0]);
     }
 
@@ -71,18 +71,18 @@ export function registerRebaseMcp(app: FastifyInstance, context: McpToolContext)
   });
 }
 
-function createRebaseMcpServer(context: McpToolContext): McpServer {
+function createTempoMcpServer(context: McpToolContext): McpServer {
   const handlers = createMcpToolHandlers(context);
   const server = new McpServer({
-    name: "rebase",
+    name: "tempo",
     version: "0.1.0"
   });
 
   server.registerTool(
-    "rebase_join",
+    "tempo_join",
     {
-      title: "Join Rebase",
-      description: "Register this coding session with Rebase for the current repo.",
+      title: "Join Tempo",
+      description: "Register this coding session with Tempo for the current repo.",
       inputSchema: {
         cwd: z.string().describe("Current working directory for this agent session."),
         agentKind: z.enum(["codex", "claude", "unknown"]).default("codex"),
@@ -102,10 +102,10 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_plan",
+    "tempo_plan",
     {
-      title: "Submit Rebase Plan",
-      description: "Tell Rebase the intended work before meaningful edits.",
+      title: "Submit Tempo Plan",
+      description: "Tell Tempo the intended work before meaningful edits.",
       inputSchema: {
         sessionId: z.string(),
         plan: z.string()
@@ -115,11 +115,11 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_checkpoint",
+    "tempo_checkpoint",
     {
-      title: "Rebase Checkpoint",
+      title: "Tempo Checkpoint",
       description:
-        "Check current Rebase risk, unread notifications, coordination episodes, and work orders.",
+        "Check current Tempo risk, unread notifications, coordination episodes, and work orders.",
       inputSchema: {
         sessionId: z.string(),
         publishContract: z
@@ -136,11 +136,11 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_publish_contract",
+    "tempo_publish_contract",
     {
-      title: "Publish Rebase Contract",
+      title: "Publish Tempo Contract",
       description:
-        "Publish the canonical contract for this session's active coordination episode. Rebase infers the conflict when one active episode matches.",
+        "Publish the canonical contract for this session's active coordination episode. Tempo infers the conflict when one active episode matches.",
       inputSchema: {
         sessionId: z.string(),
         conflictId: z.string().optional(),
@@ -164,9 +164,9 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_session_state",
+    "tempo_session_state",
     {
-      title: "Rebase Session State",
+      title: "Tempo Session State",
       description:
         "Return current session, local evidence packet id, active risks, queued directions, and queued work orders.",
       inputSchema: {
@@ -177,11 +177,11 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_collision_risk",
+    "tempo_collision_risk",
     {
-      title: "Rebase Collision Risk",
+      title: "Tempo Collision Risk",
       description:
-        "Return current Rebase collision risk with debate verdicts and cloud packet ids.",
+        "Return current Tempo collision risk with debate verdicts and cloud packet ids.",
       inputSchema: {
         sessionId: z.string().optional()
       }
@@ -190,9 +190,9 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_fetch_intervention",
+    "tempo_fetch_intervention",
     {
-      title: "Fetch Rebase Intervention",
+      title: "Fetch Tempo Intervention",
       description:
         "Fetch user-approved advisory directions and delegated work orders queued for this session.",
       inputSchema: {
@@ -203,9 +203,9 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_wait_for_direction",
+    "tempo_wait_for_direction",
     {
-      title: "Wait For Rebase Direction",
+      title: "Wait For Tempo Direction",
       description:
         "Wait briefly for a user-approved dashboard/chat direction or delegated work order for this session.",
       inputSchema: {
@@ -217,9 +217,9 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_record_decision",
+    "tempo_record_decision",
     {
-      title: "Record Rebase Decision",
+      title: "Record Tempo Decision",
       description:
         "Record a user-approved conflict choice and queue complementary agent directions.",
       inputSchema: {
@@ -236,11 +236,11 @@ function createRebaseMcpServer(context: McpToolContext): McpServer {
   );
 
   server.registerTool(
-    "rebase_acknowledge_intervention",
+    "tempo_acknowledge_intervention",
     {
-      title: "Acknowledge Rebase Intervention",
+      title: "Acknowledge Tempo Intervention",
       description:
-        "Mark a fetched Rebase direction as acknowledged after presenting the plan.",
+        "Mark a fetched Tempo direction as acknowledged after presenting the plan.",
       inputSchema: {
         sessionId: z.string(),
         interventionId: z.string()
@@ -272,8 +272,8 @@ async function authorizeMcpRequest(
     typeof header === "string" && header.startsWith("Bearer ")
       ? header.slice("Bearer ".length)
       : null;
-  if (actual !== request.server.rebase.token) {
-    await reply.code(401).send({ error: "Rebase local token required" });
+  if (actual !== request.server.tempo.token) {
+    await reply.code(401).send({ error: "Tempo local token required" });
     return false;
   }
   return true;

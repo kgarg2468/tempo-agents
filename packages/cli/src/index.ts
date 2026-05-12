@@ -7,15 +7,15 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
-import { createCoordinatorApp } from "@rebase/coordinator";
+import { createCoordinatorApp } from "@tempo/coordinator";
 import {
   checkRocketRideRuntime,
-  loadRebaseEnv,
+  loadTempoEnv,
   prepareRuntime,
   readRuntimeState,
-  type RebaseRuntime
+  type TempoRuntime
 } from "./runtime.js";
-import { syncRebaseRocketRideNode } from "./rocketride-node-sync.js";
+import { syncTempoRocketRideNode } from "./rocketride-node-sync.js";
 import { createRocketRideRunner } from "./rocketride-runner.js";
 
 async function main() {
@@ -39,17 +39,17 @@ async function main() {
     return;
   }
   if (command !== "start") {
-    throw new Error(`Unknown Rebase command: ${command}`);
+    throw new Error(`Unknown Tempo command: ${command}`);
   }
   await runStart(args);
 }
 
 async function runRocketRideSync(args: string[]) {
   const rocketRideServerDir = valueArg(args, "--rocketride-server-dir");
-  const result = await syncRebaseRocketRideNode({
+  const result = await syncTempoRocketRideNode({
     ...(rocketRideServerDir ? { rocketRideServerDir } : {})
   });
-  console.log(`Synced Rebase RocketRide node to ${result.targetDir}`);
+  console.log(`Synced Tempo RocketRide node to ${result.targetDir}`);
   if (result.runtimeTargetDir) {
     console.log(`Synced runnable RocketRide node to ${result.runtimeTargetDir}`);
   }
@@ -60,28 +60,28 @@ async function runMcpFallback(args: string[]) {
   const tool = args[0];
   if (!tool) {
     throw new Error(
-      "Usage: rebase mcp <checkpoint|wait-for-direction|fetch-intervention|record-decision|session-state> --json '<payload>'"
+      "Usage: tempo mcp <checkpoint|wait-for-direction|fetch-intervention|record-decision|session-state> --json '<payload>'"
     );
   }
   const endpoint = mcpFallbackEndpoint(tool);
   const runtime = await readRuntimeState(process.cwd());
   if (!runtime) {
-    throw new Error("Rebase is not initialized in this repo. Run `rebase init`.");
+    throw new Error("Tempo is not initialized in this repo. Run `tempo init`.");
   }
-  await loadRebaseEnv(runtime.envPath);
+  await loadTempoEnv(runtime.envPath);
   const payloadText = valueArg(args, "--json") ?? "{}";
   const payload = JSON.parse(payloadText) as unknown;
   const response = await fetch(`${runtime.coordinatorUrl}${endpoint}`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${process.env.REBASE_LOCAL_TOKEN ?? runtime.token}`,
+      authorization: `Bearer ${process.env.TEMPO_LOCAL_TOKEN ?? runtime.token}`,
       "content-type": "application/json"
     },
     body: JSON.stringify(payload)
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`Rebase MCP fallback ${tool} failed: ${response.status} ${text}`);
+    throw new Error(`Tempo MCP fallback ${tool} failed: ${response.status} ${text}`);
   }
   console.log(JSON.stringify(JSON.parse(text), null, 2));
 }
@@ -99,7 +99,7 @@ function mcpFallbackEndpoint(tool: string): string {
   };
   const endpoint = endpoints[tool];
   if (!endpoint) {
-    throw new Error(`Unknown Rebase MCP fallback tool: ${tool}`);
+    throw new Error(`Unknown Tempo MCP fallback tool: ${tool}`);
   }
   return endpoint;
 }
@@ -117,15 +117,15 @@ async function runStart(args: Set<string>) {
     cwd: process.cwd(),
     prompts
   });
-  await loadRebaseEnv(path.join(runtime.repoRoot, ".env"));
-  await loadRebaseEnv(runtime.envPath);
+  await loadTempoEnv(path.join(runtime.repoRoot, ".env"));
+  await loadTempoEnv(runtime.envPath);
   const rocketRide = await checkRocketRideRuntime({
     rocketRideUri: runtime.rocketRideUri
   });
   const skipRocketRide = args.has("--skip-rocketride");
   if (!rocketRide.ok && !skipRocketRide) {
     throw new Error(
-      `${rocketRide.message}\nRebase uses RocketRide pipelines for merge-aware coordination. Start RocketRide or rerun with --skip-rocketride for local coordinator development only.`
+      `${rocketRide.message}\nTempo uses RocketRide pipelines for merge-aware coordination. Start RocketRide or rerun with --skip-rocketride for local coordinator development only.`
     );
   }
   const rocketRideRunner = skipRocketRide
@@ -156,8 +156,8 @@ async function runStart(args: Set<string>) {
     port: runtime.coordinatorPort
   });
 
-  console.log(`Rebase coordinator: ${runtime.coordinatorUrl}`);
-  console.log(`Rebase env file: ${runtime.envPath}`);
+  console.log(`Tempo coordinator: ${runtime.coordinatorUrl}`);
+  console.log(`Tempo env file: ${runtime.envPath}`);
   console.log(
     `RocketRide: ${rocketRide.ok ? "online" : "offline"} (${runtime.rocketRideUri})`
   );
@@ -165,21 +165,21 @@ async function runStart(args: Set<string>) {
   if (!noDashboard) {
     dashboard = await startDashboard(runtime);
     if (dashboard) {
-      console.log(`Rebase dashboard: ${dashboard.url}`);
+      console.log(`Tempo dashboard: ${dashboard.url}`);
       if (dashboard.port !== runtime.dashboardPort) {
         console.log(
           `Dashboard port ${runtime.dashboardPort} was occupied; using ${dashboard.port}.`
         );
       }
     } else {
-      console.log("Rebase dashboard: run `pnpm --filter @rebase/dashboard dev` from the Rebase repo.");
+      console.log("Tempo dashboard: run `pnpm --filter @tempo/dashboard dev` from the Tempo repo.");
     }
   }
-  console.log(`Rebase MCP endpoint: ${runtime.mcpUrl}`);
+  console.log(`Tempo MCP endpoint: ${runtime.mcpUrl}`);
   console.log(
-    `Codex MCP setup: codex mcp add rebase --url ${runtime.mcpUrl} --bearer-token-env-var REBASE_LOCAL_TOKEN`
+    `Codex MCP setup: codex mcp add tempo --url ${runtime.mcpUrl} --bearer-token-env-var TEMPO_LOCAL_TOKEN`
   );
-  console.log(`Set REBASE_LOCAL_TOKEN=${runtime.token}`);
+  console.log(`Set TEMPO_LOCAL_TOKEN=${runtime.token}`);
 
   if (!noOpen) {
     const url = dashboard ? dashboard.url : runtime.coordinatorUrl;
@@ -200,28 +200,28 @@ async function runStart(args: Set<string>) {
 async function runInit(args: Set<string>) {
   const yes = args.has("--yes") || args.has("-y");
   const prompts = yes
-    ? { updateGitignore: true, updateAgents: true, updateRebaseIgnore: true }
+    ? { updateGitignore: true, updateAgents: true, updateTempoIgnore: true }
     : await askSetupPrompts();
   const runtime = await prepareRuntime({
     cwd: process.cwd(),
     prompts
   });
-  console.log(`Rebase initialized: ${runtime.dataDir}`);
-  console.log(`Rebase hook script: ${runtime.hookPath}`);
-  console.log(`Rebase MCP endpoint: ${runtime.mcpUrl}`);
+  console.log(`Tempo initialized: ${runtime.dataDir}`);
+  console.log(`Tempo hook script: ${runtime.hookPath}`);
+  console.log(`Tempo MCP endpoint: ${runtime.mcpUrl}`);
   console.log(
-    `Codex MCP setup: codex mcp add rebase --url ${runtime.mcpUrl} --bearer-token-env-var REBASE_LOCAL_TOKEN`
+    `Codex MCP setup: codex mcp add tempo --url ${runtime.mcpUrl} --bearer-token-env-var TEMPO_LOCAL_TOKEN`
   );
-  console.log(`Set REBASE_LOCAL_TOKEN=${runtime.token}`);
+  console.log(`Set TEMPO_LOCAL_TOKEN=${runtime.token}`);
 }
 
 async function runStatus() {
   const runtime = await readRuntimeState(process.cwd());
   if (!runtime) {
-    console.log("Rebase is not initialized in this repo. Run `rebase init`.");
+    console.log("Tempo is not initialized in this repo. Run `tempo init`.");
     return;
   }
-  await loadRebaseEnv(runtime.envPath);
+  await loadTempoEnv(runtime.envPath);
   const [health, agents, conflicts, evidence] = await Promise.all([
     fetchJson<{ ok: boolean }>(`${runtime.coordinatorUrl}/health`).catch(() => null),
     fetchJson<{ agents: unknown[] }>(`${runtime.coordinatorUrl}/api/agents`).catch(
@@ -240,7 +240,7 @@ async function runStatus() {
       riskCounts[conflict.risk] += 1;
     }
   }
-  console.log(`Rebase runtime: ${runtime.dataDir}`);
+  console.log(`Tempo runtime: ${runtime.dataDir}`);
   console.log(`Coordinator: ${health?.ok ? "online" : "offline"} (${runtime.coordinatorUrl})`);
   console.log(`Dashboard: ${runtime.dashboardUrl}`);
   console.log(`MCP: ${runtime.mcpUrl}`);
@@ -255,13 +255,13 @@ async function runStatus() {
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Rebase status request failed: ${response.status}`);
+    throw new Error(`Tempo status request failed: ${response.status}`);
   }
   return (await response.json()) as T;
 }
 
 async function startDashboard(
-  runtime: RebaseRuntime
+  runtime: TempoRuntime
 ): Promise<StartedDashboard | null> {
   const dashboardDir = await findDashboardDir();
   if (!dashboardDir) return null;
@@ -282,9 +282,9 @@ async function startDashboard(
     {
       env: {
         ...process.env,
-        REBASE_COORDINATOR_URL: runtime.coordinatorUrl,
-        NEXT_PUBLIC_REBASE_COORDINATOR_URL: runtime.coordinatorUrl,
-        REBASE_LOCAL_TOKEN: runtime.token
+        TEMPO_COORDINATOR_URL: runtime.coordinatorUrl,
+        NEXT_PUBLIC_TEMPO_COORDINATOR_URL: runtime.coordinatorUrl,
+        TEMPO_LOCAL_TOKEN: runtime.token
       },
       stdio: "inherit"
     }
@@ -338,27 +338,27 @@ async function askSetupPrompts() {
     return {
       updateGitignore: false,
       updateAgents: false,
-      updateRebaseIgnore: false
+      updateTempoIgnore: false
     };
   }
   const rl = createInterface({ input, output });
   try {
     const updateGitignore = await askYesNo(
       rl,
-      "Add .rebase/ to this repo's .gitignore?",
+      "Add .tempo/ to this repo's .gitignore?",
       true
     );
     const updateAgents = await askYesNo(
       rl,
-      "Add Rebase instructions to AGENTS.md?",
+      "Add Tempo instructions to AGENTS.md?",
       true
     );
-    const updateRebaseIgnore = await askYesNo(
+    const updateTempoIgnore = await askYesNo(
       rl,
-      "Create .rebaseignore privacy filter?",
+      "Create .tempoignore privacy filter?",
       true
     );
-    return { updateGitignore, updateAgents, updateRebaseIgnore };
+    return { updateGitignore, updateAgents, updateTempoIgnore };
   } finally {
     rl.close();
   }

@@ -1,5 +1,5 @@
 {
-  "name": "@rebase/evals",
+  "name": "@tempo/evals",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -17,8 +17,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@rebase/coordinator": "workspace:*",
-    "@rebase/shared": "workspace:*",
+    "@tempo/coordinator": "workspace:*",
+    "@tempo/shared": "workspace:*",
     "zod": "^4.1.13"
   }
 }

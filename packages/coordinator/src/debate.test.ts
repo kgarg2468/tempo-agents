@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Fingerprint, RebaseConflict } from "@rebase/shared";
+import type { Fingerprint, TempoConflict } from "@tempo/shared";
 import { createLocalDebateVerdict, estimateTokenCost, withDebate } from "./debate.js";
 
 describe("local debate and token-cost estimation", () => {
@@ -47,9 +47,9 @@ describe("local debate and token-cost estimation", () => {
 });
 
 function taskConflict(input: {
-  risk: RebaseConflict["risk"];
-  classificationKind: NonNullable<RebaseConflict["classification"]>["kind"];
-}): RebaseConflict {
+  risk: TempoConflict["risk"];
+  classificationKind: NonNullable<TempoConflict["classification"]>["kind"];
+}): TempoConflict {
   return {
     id: `conflict-${input.classificationKind}`,
     repoId: "repo-1",

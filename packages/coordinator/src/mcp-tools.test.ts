@@ -1,15 +1,15 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createRebaseStore } from "./store.js";
+import { createTempoStore } from "./store.js";
 import { createMcpToolHandlers } from "./mcp-tools.js";
 import { worktreeIdFor } from "./ids.js";
 
-describe("Rebase MCP tool handlers", () => {
+describe("Tempo MCP tool handlers", () => {
   it("joins, records a plan, checkpoints risk, and fetches queued intervention", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -90,7 +90,7 @@ describe("Rebase MCP tool handlers", () => {
     });
     const checkpointWithDirection = handlers.checkpoint({ sessionId: join.sessionId });
     expect(checkpointWithDirection.notifications).toContain(
-      "Rebase delivered 1 queued direction for this session."
+      "Tempo delivered 1 queued direction for this session."
     );
     expect(checkpointWithDirection.directions[0]?.editedDirection).toContain("Pause");
 
@@ -107,8 +107,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("does not locally synthesize coordination episodes in required RocketRide mode", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-rr-required-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-rr-required-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -166,8 +166,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("records one decision, delivers directions on checkpoint, and acknowledges receipt", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-decision-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-decision-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -254,8 +254,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("defaults split ownership from agent chat to the recording session owner", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-default-owner-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-default-owner-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -315,8 +315,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("treats one user decision as episode-scoped across sibling conflicts", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-episode-decision-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-episode-decision-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -415,9 +415,9 @@ describe("Rebase MCP tool handlers", () => {
     store.close();
   });
 
-  it("delivers an automatic work order before a manual decision, then later delivers the decision", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-manual-handoff-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+  it("pauses both agents with choices before split ownership, then delivers owner and adapter work orders", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-manual-handoff-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -456,10 +456,23 @@ describe("Rebase MCP tool handlers", () => {
       sessionId: adapter.sessionId,
       timeoutMs: 1
     });
-    expect(firstWait.timedOut).toBe(false);
-    expect(firstWait.keepWaiting).toBe(false);
-    expect(firstWait.workOrders[0]?.role).toBe("adapter");
+    expect(firstWait.timedOut).toBe(true);
+    expect(firstWait.keepWaiting).toBe(true);
+    expect(firstWait.workOrders).toEqual([]);
     expect(firstWait.directions).toEqual([]);
+    expect(firstWait.choices[0]?.conflictId).toBe("conflict-1");
+    expect(firstWait.choices[0]?.options.map((option) => option.title)).toContain(
+      "Split ownership"
+    );
+
+    const ownerCheckpoint = handlers.checkpoint({ sessionId: owner.sessionId });
+    const adapterCheckpoint = handlers.checkpoint({ sessionId: adapter.sessionId });
+    expect(ownerCheckpoint.pause).toBe(true);
+    expect(adapterCheckpoint.pause).toBe(true);
+    expect(ownerCheckpoint.workOrders).toEqual([]);
+    expect(adapterCheckpoint.workOrders).toEqual([]);
+    expect(ownerCheckpoint.choices[0]?.conflictId).toBe("conflict-1");
+    expect(adapterCheckpoint.choices[0]?.conflictId).toBe("conflict-1");
 
     handlers.recordDecision({
       sessionId: owner.sessionId,
@@ -470,14 +483,26 @@ describe("Rebase MCP tool handlers", () => {
       createdBy: "agent"
     });
 
+    const ownerDelivered = await handlers.waitForDirection({
+      sessionId: owner.sessionId,
+      timeoutMs: 1
+    });
+    expect(ownerDelivered.timedOut).toBe(false);
+    expect(ownerDelivered.keepWaiting).toBe(false);
+    expect(ownerDelivered.workOrders[0]?.role).toBe("contract_owner");
+    expect(ownerDelivered.directions[0]?.directive?.role).toBe("contract_owner");
+    expect(ownerDelivered.choices).toEqual([]);
+
     const delivered = await handlers.waitForDirection({
       sessionId: adapter.sessionId,
       timeoutMs: 1
     });
     expect(delivered.timedOut).toBe(false);
     expect(delivered.keepWaiting).toBe(false);
+    expect(delivered.workOrders[0]?.role).toBe("adapter");
     expect(delivered.directions).toHaveLength(1);
     expect(delivered.directions[0]?.directive?.role).toBe("adapter");
+    expect(delivered.choices).toEqual([]);
     expect(store.listQueuedInterventions("repo-1", adapter.sessionId)).toEqual([]);
 
     const acknowledged = handlers.acknowledgeIntervention({
@@ -495,8 +520,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("activates RocketRide proposed work orders after an episode decision", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-proposed-work-order-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-proposed-work-order-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -613,8 +638,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("does not re-offer choices after a decision but keeps the owner paused until contract publication", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-decided-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-decided-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -678,8 +703,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("downgrades conflicts that include an integration session to notices", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-integration-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-integration-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -734,8 +759,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("keeps adapters waiting for owner publication and delivers the published shape", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-publication-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-publication-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -825,8 +850,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("delivers split ownership direction to an affected agent that joins after the decision", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-late-decision-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-late-decision-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -885,8 +910,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("delivers published owner shape to an affected agent that joins after publication", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-late-publication-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-late-publication-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -956,8 +981,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("waits for queued directions and times out with current choices", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-wait-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-wait-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -1020,8 +1045,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("returns work orders through checkpoint and wait so every affected agent gets delegated next steps", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-work-orders-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-work-orders-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -1113,8 +1138,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("keeps fetched active work orders visible until a checkpoint completes them", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-active-work-order-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-active-work-order-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -1175,7 +1200,7 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("hard-pauses checkpoints when predictive merge-risk is blocked", () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: "/tmp/repo",
@@ -1260,8 +1285,8 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("publishes the active episode contract without requiring an agent to know the conflict id", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-infer-contract-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-infer-contract-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -1327,9 +1352,9 @@ describe("Rebase MCP tool handlers", () => {
 
   it("publishes a multi-conflict episode contract without requiring an agent to know the conflict id", async () => {
     const dir = await mkdtemp(
-      path.join(tmpdir(), "rebase-mcp-infer-episode-contract-")
+      path.join(tmpdir(), "tempo-mcp-infer-episode-contract-")
     );
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -1423,9 +1448,9 @@ describe("Rebase MCP tool handlers", () => {
 
   it("treats same-checkpoint owner publication as satisfying the owner work order in required RocketRide mode", async () => {
     const dir = await mkdtemp(
-      path.join(tmpdir(), "rebase-mcp-required-owner-publication-")
+      path.join(tmpdir(), "tempo-mcp-required-owner-publication-")
     );
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -1455,6 +1480,11 @@ describe("Rebase MCP tool handlers", () => {
       agentKind: "codex",
       displayName: "reminders-agent"
     });
+    await mkdir(path.join(dir, "labels", "src", "shared"), { recursive: true });
+    await writeFile(
+      path.join(dir, "labels", "src", "shared", "task.ts"),
+      "export interface Task { id: string; label: string; subtitle: string | null; }\n"
+    );
     store.upsertConflict({
       id: "conflict-1",
       repoId: "repo-1",
@@ -1517,14 +1547,157 @@ describe("Rebase MCP tool handlers", () => {
     });
 
     expect(published.pause).toBe(false);
+    expect(published.publications[0]?.fileSnapshots?.[0]).toMatchObject({
+      path: "src/shared/task.ts",
+      content:
+        "export interface Task { id: string; label: string; subtitle: string | null; }\n"
+    });
     expect(store.listWorkOrders("repo-1")[0]?.status).toBe("completed");
 
     store.close();
   });
 
+  it("keeps an adapter paused until shared files match the owner snapshot and feature intent is preserved", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-snapshot-enforce-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+
+    const ownerDir = path.join(dir, "labels");
+    const adapterDir = path.join(dir, "reminders");
+    await mkdir(path.join(ownerDir, "src", "shared"), { recursive: true });
+    await mkdir(path.join(adapterDir, "src", "shared"), { recursive: true });
+    const canonicalTask =
+      "export interface Task { id: string; label: string; project: string | null; subtitle: string | null; reminderAt: string | null; }\n";
+    await writeFile(path.join(ownerDir, "src", "shared", "task.ts"), canonicalTask);
+    await writeFile(
+      path.join(adapterDir, "src", "shared", "task.ts"),
+      "export interface Task { id: string; subtitle: string | null; }\n"
+    );
+
+    const owner = handlers.join({
+      cwd: ownerDir,
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const adapter = handlers.join({
+      cwd: adapterDir,
+      agentKind: "codex",
+      displayName: "reminders-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedSurfaces: ["Task model", "Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "blocked",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [owner.worktreeId, adapter.worktreeId],
+      affectedAgentSessionIds: [owner.sessionId, adapter.sessionId],
+      conflictIds: ["conflict-1"],
+      ownerAgentSessionId: owner.sessionId,
+      rocketRideRunIds: ["rr-1"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    handlers.recordDecision({
+      sessionId: owner.sessionId,
+      conflictId: "conflict-1",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection: "labels-agent owns the canonical Task file.",
+      ownerAgentSessionId: owner.sessionId,
+      createdBy: "agent"
+    });
+
+    const ownerCheckpoint = handlers.checkpoint({
+      sessionId: owner.sessionId,
+      publishContract: {
+        conflictId: "conflict-1",
+        surface: "Task contract",
+        shapeSummary: "Task includes labels and reminders.",
+        files: ["src/shared/task.ts"]
+      }
+    });
+    const publication = ownerCheckpoint.publications[0];
+    expect(publication?.fileSnapshots).toHaveLength(1);
+
+    store.upsertWorkOrder({
+      id: "adapter-order",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: adapter.sessionId,
+      role: "adapter",
+      status: "queued",
+      revision: 1,
+      title: "Adapt to Task contract",
+      summary: "Match the owner snapshot and preserve reminders.",
+      requiredContract: "Task keeps label and project.",
+      requiredFeatureTerms: ["subtitle", "reminderAt"],
+      requiredSnapshotPublicationId: publication?.id,
+      allowedFiles: ["src/app/**"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after matching the owner snapshot.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertFingerprint(
+      makeFingerprint(adapter.worktreeId, "reminder-missing", [
+        "Task includes label and project but no reminder timestamp."
+      ])
+    );
+
+    const snapshotBlocked = handlers.checkpoint({ sessionId: adapter.sessionId });
+    expect(snapshotBlocked.pause).toBe(true);
+    expect(snapshotBlocked.notifications.join("\n")).toContain(
+      "snapshot mismatch: src/shared/task.ts"
+    );
+
+    await writeFile(path.join(adapterDir, "src", "shared", "task.ts"), canonicalTask);
+    const intentBlocked = handlers.checkpoint({ sessionId: adapter.sessionId });
+    expect(intentBlocked.pause).toBe(true);
+    expect(intentBlocked.notifications.join("\n")).toContain("reminderAt");
+
+    store.upsertFingerprint(
+      makeFingerprint(adapter.worktreeId, "combined", [
+        "Task includes label, project, subtitle, and reminderAt."
+      ])
+    );
+    const completed = handlers.checkpoint({ sessionId: adapter.sessionId });
+    expect(completed.pause).toBe(false);
+    expect(
+      store
+        .listWorkOrders("repo-1")
+        .find((order) => order.id === "adapter-order")?.status
+    ).toBe("completed");
+
+    store.close();
+  });
+
   it("pauses an adapter checkpoint until its fingerprint satisfies the active work order contract", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-enforce-work-order-"));
-    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-enforce-work-order-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: dir,
@@ -1604,7 +1777,7 @@ describe("Rebase MCP tool handlers", () => {
   });
 
   it("does not auto-complete integration owner work orders before merge risk is safe", () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: "/tmp/repo",
@@ -1674,8 +1847,121 @@ describe("Rebase MCP tool handlers", () => {
     store.close();
   });
 
+  it("still enforces adapter work orders in integration episodes", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-mcp-integration-adapter-"));
+    const store = createTempoStore(path.join(dir, "tempo.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+    const integrationDir = path.join(dir, "integration");
+    const adapterDir = path.join(dir, "bulk");
+    await mkdir(path.join(integrationDir, "src", "shared"), { recursive: true });
+    await mkdir(path.join(adapterDir, "src", "shared"), { recursive: true });
+    await writeFile(
+      path.join(integrationDir, "src", "shared", "task.ts"),
+      "export interface Task { id: string; archived: boolean; batchId?: string; }\n"
+    );
+    await writeFile(
+      path.join(adapterDir, "src", "shared", "task.ts"),
+      "export interface Task { id: string; archived: boolean; }\n"
+    );
+
+    const integration = handlers.join({
+      cwd: integrationDir,
+      agentKind: "codex",
+      coordinationRole: "integration",
+      displayName: "integration-agent"
+    });
+    const adapter = handlers.join({
+      cwd: adapterDir,
+      agentKind: "codex",
+      displayName: "bulk-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task contract.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [integration.worktreeId, adapter.worktreeId],
+      affectedSurfaces: ["Task type"],
+      evidence: ["Both worktrees changed src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "blocked",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [integration.worktreeId, adapter.worktreeId],
+      affectedAgentSessionIds: [integration.sessionId, adapter.sessionId],
+      conflictIds: ["conflict-1"],
+      ownerAgentSessionId: integration.sessionId,
+      rocketRideRunIds: ["rr-1"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    const ownerCheckpoint = handlers.checkpoint({
+      sessionId: integration.sessionId,
+      publishContract: {
+        conflictId: "conflict-1",
+        surface: "Task contract",
+        shapeSummary: "Task includes archived and batchId.",
+        files: ["src/shared/task.ts"]
+      }
+    });
+    const publication = ownerCheckpoint.publications[0];
+    store.upsertWorkOrder({
+      id: "adapter-order",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: adapter.sessionId,
+      role: "adapter",
+      status: "queued",
+      revision: 1,
+      title: "Adapt to integrated Task file",
+      summary: "Match the integration owner snapshot.",
+      requiredContract: "Task includes archived and batchId.",
+      requiredFeatureTerms: ["archived", "batchId"],
+      requiredSnapshotPublicationId: publication?.id,
+      allowedFiles: ["src/components/**"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after matching the snapshot.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertFingerprint(
+      makeFingerprint(adapter.worktreeId, "bulk-partial", [
+        "Task includes archived but not batchId."
+      ])
+    );
+
+    const checkpoint = handlers.checkpoint({ sessionId: adapter.sessionId });
+    expect(checkpoint.pause).toBe(true);
+    expect(checkpoint.notifications.join("\n")).toContain(
+      "snapshot mismatch: src/shared/task.ts"
+    );
+    expect(
+      store.listWorkOrders("repo-1").find((order) => order.id === "adapter-order")
+        ?.status
+    ).toBe("fetched");
+
+    store.close();
+  });
+
   it("hard-pauses an adapter that still touches files blocked by its work order", () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
     const handlers = createMcpToolHandlers({
       repoId: "repo-1",
       repoRoot: "/tmp/repo",

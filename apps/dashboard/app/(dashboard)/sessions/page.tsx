@@ -6,10 +6,10 @@ import {
 } from "lucide-react";
 import { PageHeader } from "../../../components/page-header";
 import { SessionMap } from "../../../components/session-map";
-import { getRebaseSnapshot } from "../../../lib/rebase-api";
+import { getTempoSnapshot } from "../../../lib/tempo-api";
 
 export default async function SessionsPage() {
-  const snapshot = await getRebaseSnapshot();
+  const snapshot = await getTempoSnapshot();
   const activeConflict = snapshot.conflicts.find(
     (conflict) => conflict.status === "open" || conflict.status === "acknowledged"
   );
@@ -56,9 +56,9 @@ export default async function SessionsPage() {
             coordinator unavailable
           </span>
           <div>
-            <h2 className="page-title">No live Rebase data</h2>
+            <h2 className="page-title">No live Tempo data</h2>
             <p className="page-subtitle">
-              Start `rebase` in a git repo to watch worktrees, agent checkpoints,
+              Start `tempo` in a git repo to watch worktrees, agent checkpoints,
               contract decisions, and owner publications.
             </p>
           </div>
@@ -71,7 +71,7 @@ export default async function SessionsPage() {
             <div className="row-title">
               <span>Coordination timeline</span>
               <span className="muted small">
-                {snapshot.connected ? "live" : "demo fixture"}
+                {snapshot.connected ? "live" : "sample data"}
               </span>
             </div>
             <div className="timeline-list">
@@ -88,19 +88,14 @@ export default async function SessionsPage() {
               ))}
             </div>
           </section>
-          <SessionMap
-            repo={snapshot.repo}
-            worktrees={snapshot.worktrees}
-            fingerprints={snapshot.fingerprints}
-            conflicts={snapshot.conflicts}
-          />
+          <SessionMap graph={snapshot.graph} />
         </div>
         <aside className="surface inspector">
           <span className="status-pill">
             <span
               className={`status-dot ${snapshot.connected ? "" : "status-dot-warn"}`}
             />
-            {snapshot.connected ? "coordinator online" : "demo fixture"}
+            {snapshot.connected ? "coordinator online" : "sample data"}
           </span>
           <div>
             <h2 className="page-title">
@@ -108,7 +103,7 @@ export default async function SessionsPage() {
             </h2>
             <p className="page-subtitle">
               {activeConflict?.summary ??
-                "Rebase is watching for worktrees converging on shared contract surfaces."}
+                "Tempo is watching for worktrees converging on shared contract surfaces."}
             </p>
           </div>
           <div className="row-panel">
@@ -243,7 +238,7 @@ export default async function SessionsPage() {
   );
 }
 
-type Snapshot = Awaited<ReturnType<typeof getRebaseSnapshot>>;
+type Snapshot = Awaited<ReturnType<typeof getTempoSnapshot>>;
 type TimelineItem = {
   title: string;
   detail: string;
@@ -298,7 +293,7 @@ function buildLifecycle(snapshot: Snapshot, conflictId: string | undefined): Tim
       title: snapshot.connected ? "Coordinator online" : "Coordinator unavailable",
       detail: snapshot.connected
         ? `${snapshot.coordinatorUrl} is serving live repo state.`
-        : "No fake conflicts are shown unless demo mode is enabled.",
+        : "No sample conflicts are shown unless sample-data mode is enabled.",
       done: snapshot.connected,
       tone: snapshot.connected ? "done" : "waiting"
     },
@@ -307,7 +302,7 @@ function buildLifecycle(snapshot: Snapshot, conflictId: string | undefined): Tim
       detail:
         snapshot.agents.length > 0
           ? snapshot.agents.map((agent) => agent.displayName).join(", ")
-          : "Agents appear after rebase_join.",
+          : "Agents appear after tempo_join.",
       done: snapshot.agents.length > 0,
       tone: snapshot.agents.length > 0 ? "done" : "muted"
     },
@@ -315,7 +310,7 @@ function buildLifecycle(snapshot: Snapshot, conflictId: string | undefined): Tim
       title: activeConflict ? activeConflict.title : "No blocking conflict",
       detail: activeConflict
         ? activeConflict.summary
-        : "Rebase is watching for contract convergence.",
+        : "Tempo is watching for contract convergence.",
       done: Boolean(activeConflict),
       tone: activeConflict
         ? activeConflict.classification?.kind === "coordination_notice"
@@ -382,14 +377,14 @@ function buildLifecycle(snapshot: Snapshot, conflictId: string | undefined): Tim
         ? "Ready for integration prompt"
         : hasCoordinationActivity
           ? "Worktrees not clean yet"
-          : "Waiting for demo agents",
+          : "Waiting for agent sessions",
       detail: integrationActive && !allClean
         ? "An integration session is converging feature work into main without opening new blocking choices."
         : readyForIntegration
-        ? "Rebase coordination is complete; use a normal agent prompt for merging."
+        ? "Tempo coordination is complete; use a normal agent prompt for merging."
         : hasCoordinationActivity
           ? "Dirty worktrees still need commits or integration-agent handling."
-          : "Launch the two feature agents to begin the showcase flow.",
+          : "Launch feature agents to begin the coordination flow.",
       done: readyForIntegration,
       tone: integrationActive && !allClean
         ? "active"

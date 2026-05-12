@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "tempo-merge-risk",
+  "description": "Required Tempo pipeline. Produces typed predictive { mergeRisk } output without running git merge machinery.",
+  "x-tempo": {
+    "contract": "mergeRiskRunOutput",
+    "intent": "Predict merge incompatibility from diffs, hunks, fingerprints, contracts, and work-order state before Tempo declares an episode merge-safe."
+  },
+  "source": "source_1",
+  "components": [
+    {
+      "id": "source_1",
+      "provider": "webhook",
+      "config": {
+        "key": "webhook://*",
+        "mode": "Source",
+        "name": "Tempo Merge Risk Input",
+        "include": [{ "path": "*" }],
+        "parameters": {
+          "endpoint": "/pipe/process",
+          "port": 5565
+        },
+        "sync": false,
+        "type": "webhook"
+      },
+      "ui": {}
+    },
+    {
+      "id": "tempo_1",
+      "provider": "tempo_coordination",
+      "config": {
+        "operation": "merge-risk"
+      },
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "source_1" }
+      ]
+    },
+    {
+      "id": "response_1",
+      "provider": "response",
+      "config": {},
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "tempo_1" }
+      ]
+    }
+  ]
+}

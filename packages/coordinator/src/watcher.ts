@@ -1,22 +1,26 @@
 import { watch, type FSWatcher } from "chokidar";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type {
   CoordinationEpisode,
   MergeRiskAssessment,
-  RebaseConflict,
-  RebaseEvent,
-  RebaseWorktree
-} from "@rebase/shared";
+  TempoConflict,
+  TempoEvent,
+  TempoWorktree
+} from "@tempo/shared";
 import { createHeuristicAdvisory } from "./advisory.js";
 import { analyzeWorktreesOnce, type AnalyzeWorktreesResult } from "./analyzer.js";
 import {
+  extractChangedFilesFromDiff,
   getWorktreeDiff,
   listWorktrees,
   normalizeDiff,
   type GitWorktree
 } from "./git.js";
 import { stableId, worktreeIdFor } from "./ids.js";
-import { createRebasePathFilter, type RebasePathFilter } from "./path-ignore.js";
-import type { RebaseStore } from "./store.js";
+import { createTempoPathFilter, type TempoPathFilter } from "./path-ignore.js";
+import type { TempoStore } from "./store.js";
 import {
   upsertConflictGraph,
   upsertFingerprintGraph,
@@ -36,46 +40,46 @@ import {
   type RocketRideCoordinator
 } from "./rocketride.js";
 
-export interface RebaseWatcherOptions {
+export interface TempoWatcherOptions {
   repoRoot: string;
   repoId: string;
-  store: RebaseStore;
+  store: TempoStore;
   debounceMs?: number;
   pollIntervalMs?: number;
   now?: () => number;
-  onEvent?: (event: RebaseEvent) => void;
+  onEvent?: (event: TempoEvent) => void;
   rocketRide?: RocketRideCoordinator | undefined;
 }
 
-export interface RebaseWatcher {
+export interface TempoWatcher {
   start(): Promise<void>;
   stop(): Promise<void>;
   scanOnce(): Promise<AnalyzeWorktreesResult>;
-  refreshWorktrees(): Promise<RebaseWorktree[]>;
+  refreshWorktrees(): Promise<TempoWorktree[]>;
   isIgnoredPath(filePath: string): boolean;
 }
 
 const DEFAULT_DEBOUNCE_MS = 700;
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
-export function createRebaseWatcher(options: RebaseWatcherOptions): RebaseWatcher {
-  return new ChokidarRebaseWatcher(options);
+export function createTempoWatcher(options: TempoWatcherOptions): TempoWatcher {
+  return new ChokidarTempoWatcher(options);
 }
 
-class ChokidarRebaseWatcher implements RebaseWatcher {
+class ChokidarTempoWatcher implements TempoWatcher {
   private readonly debounceMs: number;
   private readonly pollIntervalMs: number;
   private readonly now: () => number;
   private readonly watchers = new Map<string, FSWatcher>();
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly pathFilter: RebasePathFilter;
+  private readonly pathFilter: TempoPathFilter;
   private poller: ReturnType<typeof setInterval> | null = null;
   private eventCounter = 0;
 
-  constructor(private readonly options: RebaseWatcherOptions) {
+  constructor(private readonly options: TempoWatcherOptions) {
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.now = options.now ?? Date.now;
-    this.pathFilter = createRebasePathFilter(options.repoRoot);
+    this.pathFilter = createTempoPathFilter(options.repoRoot);
   }
 
   async start(): Promise<void> {
@@ -106,14 +110,14 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
       rocketRide: this.options.rocketRide
     });
     await this.persistAnalysis(result);
-    this.recordEvent("analysis.completed", "Rebase analyzed dirty worktrees", {
+    this.recordEvent("analysis.completed", "Tempo analyzed dirty worktrees", {
       fingerprintCount: result.fingerprints.length,
       conflictCount: result.conflicts.length
     });
     return result;
   }
 
-  async refreshWorktrees(): Promise<RebaseWorktree[]> {
+  async refreshWorktrees(): Promise<TempoWorktree[]> {
     const previousWorktrees = this.options.store.listWorktrees(this.options.repoId);
     const before = new Set(previousWorktrees.map((worktree) => worktree.id));
     const previousById = new Map(
@@ -130,14 +134,14 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
       upsertWorktreeGraph(this.options.store, worktree);
       this.ensureFsWatcher(worktree.path);
       if (!before.has(worktree.id)) {
-        this.recordEvent("worktree.discovered", "Rebase discovered a git worktree", {
+        this.recordEvent("worktree.discovered", "Tempo discovered a git worktree", {
           worktreeId: worktree.id,
           path: worktree.path,
           branch: worktree.branch
         });
       }
       if (worktree.dirty && !previousById.get(worktree.id)?.dirty) {
-        this.recordEvent("worktree.activity", "Rebase observed uncommitted work", {
+        this.recordEvent("worktree.activity", "Tempo observed uncommitted work", {
           worktreeId: worktree.id,
           path: worktree.path,
           branch: worktree.branch
@@ -167,7 +171,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     return this.pathFilter.isIgnoredPath(filePath);
   }
 
-  private async observeWorktree(worktree: GitWorktree): Promise<RebaseWorktree> {
+  private async observeWorktree(worktree: GitWorktree): Promise<TempoWorktree> {
     const diff = await getWorktreeDiff(worktree.path);
     const normalized = normalizeDiff(this.pathFilter.filterDiff(diff));
     return {
@@ -229,7 +233,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
       const coordinationRocketRideRunIds = [...result.rocketRideRunIds];
       const collisionRun = await runRocketRidePipeline(
         this.options.rocketRide,
-        "rebase-collision",
+        "tempo-collision",
         {
           fingerprints: result.fingerprints,
           plans: this.options.store.listAgentSessions(this.options.repoId),
@@ -243,7 +247,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
         }
       );
       if (!collisionRun) {
-        throw new Error("RocketRide rebase-collision did not return a run");
+        throw new Error("RocketRide tempo-collision did not return a run");
       }
       coordinationRocketRideRunIds.push(collisionRun.runId);
       const collision = parseCollisionRunOutput(collisionRun.output);
@@ -258,7 +262,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
 
       const workOrderRun = await runRocketRidePipeline(
         this.options.rocketRide,
-        "rebase-work-order",
+        "tempo-work-order",
         {
           plannerMode: process.env.OPENAI_API_KEY ? "required" : "optional",
           conflicts: collision.conflicts,
@@ -274,7 +278,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
         }
       );
       if (!workOrderRun) {
-        throw new Error("RocketRide rebase-work-order did not return a run");
+        throw new Error("RocketRide tempo-work-order did not return a run");
       }
       coordinationRocketRideRunIds.push(workOrderRun.runId);
       const workOrder = parseWorkOrderRunOutput(workOrderRun.output);
@@ -320,7 +324,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     const coordinationRocketRideRunIds = [...result.rocketRideRunIds];
     const collisionRun = await runRocketRidePipeline(
       this.options.rocketRide,
-      "rebase-collision",
+      "tempo-collision",
       {
         fingerprints: result.fingerprints,
         plans: this.options.store.listAgentSessions(this.options.repoId),
@@ -331,7 +335,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     if (collisionRun) coordinationRocketRideRunIds.push(collisionRun.runId);
     const workOrderRun = await runRocketRidePipeline(
       this.options.rocketRide,
-      "rebase-work-order",
+      "tempo-work-order",
       {
         plannerMode: process.env.OPENAI_API_KEY ? "required" : "optional",
         conflicts: this.options.store.listConflicts(this.options.repoId),
@@ -358,9 +362,9 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
   }
 
   private persistConflicts(input: {
-    conflicts: RebaseConflict[];
+    conflicts: TempoConflict[];
     fingerprints: AnalyzeWorktreesResult["fingerprints"];
-    existingConflicts: Map<string, RebaseConflict>;
+    existingConflicts: Map<string, TempoConflict>;
     activeConflictIds: Set<string>;
     useLocalDebate: boolean;
   }): void {
@@ -370,15 +374,15 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
   }
 
   private persistConflict(input: {
-    conflict: RebaseConflict;
+    conflict: TempoConflict;
     fingerprints: AnalyzeWorktreesResult["fingerprints"];
-    existingConflicts: Map<string, RebaseConflict>;
+    existingConflicts: Map<string, TempoConflict>;
     activeConflictIds: Set<string>;
     useLocalDebate: boolean;
   }): void {
     const existing = input.existingConflicts.get(input.conflict.id);
     input.activeConflictIds.add(input.conflict.id);
-    const persistedConflict: RebaseConflict =
+    const persistedConflict: TempoConflict =
       existing?.status === "acknowledged"
         ? { ...input.conflict, status: "acknowledged", createdAt: existing.createdAt }
         : input.conflict;
@@ -414,7 +418,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
   }
 
   private resolveInactiveConflicts(
-    existingConflicts: Map<string, RebaseConflict>,
+    existingConflicts: Map<string, TempoConflict>,
     activeConflictIds: Set<string>
   ): void {
     for (const conflict of existingConflicts.values()) {
@@ -437,7 +441,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
 
   private persistCoordination(input: {
     episodes: CoordinationEpisode[];
-    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
+    workOrders: Parameters<TempoStore["upsertWorkOrder"]>[0][];
   }): void {
     const activeEpisodeIds = new Set(input.episodes.map((episode) => episode.id));
     for (const episode of input.episodes) {
@@ -467,10 +471,10 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
 
   private gateCoordinationUntilDecision(input: {
     episodes: CoordinationEpisode[];
-    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
+    workOrders: Parameters<TempoStore["upsertWorkOrder"]>[0][];
   }): {
     episodes: CoordinationEpisode[];
-    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
+    workOrders: Parameters<TempoStore["upsertWorkOrder"]>[0][];
   } {
     const activeDecisionConflictIds = new Set(
       this.options.store
@@ -510,8 +514,8 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
 
   private async applyMergeRisk(input: {
     episodes: CoordinationEpisode[];
-    workOrders: Parameters<RebaseStore["upsertWorkOrder"]>[0][];
-    conflicts: RebaseConflict[];
+    workOrders: Parameters<TempoStore["upsertWorkOrder"]>[0][];
+    conflicts: TempoConflict[];
     fingerprints: AnalyzeWorktreesResult["fingerprints"];
     rocketRideRunIds: string[];
     createdAt: number;
@@ -521,7 +525,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     for (const episode of input.episodes) {
       const mergeRiskRun = await runRocketRidePipeline(
         this.options.rocketRide,
-        "rebase-merge-risk",
+        "tempo-merge-risk",
         {
           repoId: this.options.repoId,
           episode,
@@ -546,7 +550,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
         }
       );
       if (!mergeRiskRun) {
-        throw new Error("RocketRide rebase-merge-risk did not return a run");
+        throw new Error("RocketRide tempo-merge-risk did not return a run");
       }
       input.rocketRideRunIds.push(mergeRiskRun.runId);
       const parsed = parseMergeRiskRunOutput(mergeRiskRun.output).mergeRisk;
@@ -563,7 +567,14 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
   private async mergeRiskDiffs(
     episode: CoordinationEpisode,
     fingerprints: AnalyzeWorktreesResult["fingerprints"]
-  ): Promise<Array<{ worktreeId: string; diffHash: string; diff: string }>> {
+  ): Promise<
+    Array<{
+      worktreeId: string;
+      diffHash: string;
+      diff: string;
+      fileHashes: Record<string, string>;
+    }>
+  > {
     const worktrees = new Map(
       this.options.store
         .listWorktrees(this.options.repoId)
@@ -572,17 +583,24 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     const fingerprintsByWorktree = new Map(
       fingerprints.map((fingerprint) => [fingerprint.worktreeId, fingerprint])
     );
-    const diffs: Array<{ worktreeId: string; diffHash: string; diff: string }> = [];
+    const diffs: Array<{
+      worktreeId: string;
+      diffHash: string;
+      diff: string;
+      fileHashes: Record<string, string>;
+    }> = [];
     for (const worktreeId of episode.affectedWorktreeIds) {
       const worktree = worktrees.get(worktreeId);
       if (!worktree || worktree.status === "missing") continue;
-      const diff = normalizeDiff(
-        this.pathFilter.filterDiff(await getWorktreeDiff(worktree.path))
+      const filteredDiff = this.pathFilter.filterDiff(
+        await getWorktreeDiff(worktree.path)
       );
+      const diff = normalizeDiff(filteredDiff);
       diffs.push({
         worktreeId,
         diffHash: fingerprintsByWorktree.get(worktreeId)?.diffHash ?? stableId(diff),
-        diff
+        diff,
+        fileHashes: await currentFileHashes(worktree.path, filteredDiff)
       });
     }
     return diffs;
@@ -590,23 +608,37 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
 
   private async diffsForFingerprints(
     fingerprints: AnalyzeWorktreesResult["fingerprints"]
-  ): Promise<Array<{ worktreeId: string; diffHash: string; diff: string }>> {
+  ): Promise<
+    Array<{
+      worktreeId: string;
+      diffHash: string;
+      diff: string;
+      fileHashes: Record<string, string>;
+    }>
+  > {
     const worktrees = new Map(
       this.options.store
         .listWorktrees(this.options.repoId)
         .map((worktree) => [worktree.id, worktree])
     );
-    const diffs: Array<{ worktreeId: string; diffHash: string; diff: string }> = [];
+    const diffs: Array<{
+      worktreeId: string;
+      diffHash: string;
+      diff: string;
+      fileHashes: Record<string, string>;
+    }> = [];
     for (const fingerprint of fingerprints) {
       const worktree = worktrees.get(fingerprint.worktreeId);
       if (!worktree || worktree.status === "missing") continue;
-      const diff = normalizeDiff(
-        this.pathFilter.filterDiff(await getWorktreeDiff(worktree.path))
+      const filteredDiff = this.pathFilter.filterDiff(
+        await getWorktreeDiff(worktree.path)
       );
+      const diff = normalizeDiff(filteredDiff);
       diffs.push({
         worktreeId: fingerprint.worktreeId,
         diffHash: fingerprint.diffHash,
-        diff
+        diff,
+        fileHashes: await currentFileHashes(worktree.path, filteredDiff)
       });
     }
     return diffs;
@@ -618,7 +650,7 @@ class ChokidarRebaseWatcher implements RebaseWatcher {
     payload: Record<string, unknown>
   ): void {
     const createdAt = this.now();
-    const event: RebaseEvent = {
+    const event: TempoEvent = {
       id: stableId(
         this.options.repoId,
         type,
@@ -687,4 +719,20 @@ function withMergeRisk(
 
 function uniqueInOrder(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+async function currentFileHashes(
+  worktreePath: string,
+  diff: string
+): Promise<Record<string, string>> {
+  const hashes: Record<string, string> = {};
+  for (const filePath of extractChangedFilesFromDiff(diff)) {
+    try {
+      const content = await readFile(path.join(worktreePath, filePath));
+      hashes[filePath] = createHash("sha256").update(content).digest("hex");
+    } catch (_error) {
+      // Deleted, binary, or inaccessible files stay unknown for RocketRide.
+    }
+  }
+  return hashes;
 }

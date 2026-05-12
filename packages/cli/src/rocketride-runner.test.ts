@@ -2,12 +2,12 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { REQUIRED_REBASE_PIPELINES } from "@rebase/coordinator";
+import { REQUIRED_TEMPO_PIPELINES } from "@tempo/coordinator";
 import { createRocketRideRunner } from "./rocketride-runner.js";
 
 async function createPipelineDir() {
-  const dir = await mkdtemp(path.join(tmpdir(), "rebase-pipelines-"));
-  for (const pipeline of REQUIRED_REBASE_PIPELINES) {
+  const dir = await mkdtemp(path.join(tmpdir(), "tempo-pipelines-"));
+  for (const pipeline of REQUIRED_TEMPO_PIPELINES) {
     await writeFile(
       path.join(dir, `${pipeline}.pipe`),
       `${JSON.stringify(executablePipeline(pipeline))}\n`
@@ -56,19 +56,19 @@ describe("createRocketRideRunner", () => {
     });
 
     expect(calls.filter((call) => call === "validate")).toHaveLength(
-      REQUIRED_REBASE_PIPELINES.length
+      REQUIRED_TEMPO_PIPELINES.length
     );
     expect(calls.filter((call) => call.startsWith("use:"))).toHaveLength(
-      REQUIRED_REBASE_PIPELINES.length
+      REQUIRED_TEMPO_PIPELINES.length
     );
     expect(calls.filter((call) => call.startsWith("terminate:"))).toHaveLength(
-      REQUIRED_REBASE_PIPELINES.length
+      REQUIRED_TEMPO_PIPELINES.length
     );
     expect(calls.filter((call) => call === "send")).toHaveLength(
-      REQUIRED_REBASE_PIPELINES.length
+      REQUIRED_TEMPO_PIPELINES.length
     );
     expect(sentMimeTypes).toEqual(
-      REQUIRED_REBASE_PIPELINES.map(() => "text/plain")
+      REQUIRED_TEMPO_PIPELINES.map(() => "text/plain")
     );
   });
 
@@ -89,7 +89,7 @@ describe("createRocketRideRunner", () => {
         async terminate() {},
         async send() {
           return {
-            name: "rebase-fingerprint.smoke.json",
+            name: "tempo-fingerprint.smoke.json",
             path: "",
             objectId: "metadata-only"
           };
@@ -101,14 +101,14 @@ describe("createRocketRideRunner", () => {
       ok: false,
       pipelineStatus: "failed",
       lastError: expect.stringContaining(
-        "rebase-fingerprint: RocketRide rebase-fingerprint output did not match"
+        "tempo-fingerprint: RocketRide tempo-fingerprint output did not match"
       )
     });
   });
 
   it("fails validation before start when a required pipeline has no source component", async () => {
-    const pipelineDir = await mkdtemp(path.join(tmpdir(), "rebase-pipelines-"));
-    for (const pipeline of REQUIRED_REBASE_PIPELINES) {
+    const pipelineDir = await mkdtemp(path.join(tmpdir(), "tempo-pipelines-"));
+    for (const pipeline of REQUIRED_TEMPO_PIPELINES) {
       await writeFile(
         path.join(pipelineDir, `${pipeline}.pipe`),
         `${JSON.stringify({ name: pipeline, components: [] })}\n`
@@ -137,7 +137,7 @@ describe("createRocketRideRunner", () => {
       ok: false,
       pipelineStatus: "failed",
       lastError: expect.stringContaining(
-        "rebase-fingerprint.pipe is missing a source component"
+        "tempo-fingerprint.pipe is missing a source component"
       )
     });
   });
@@ -167,12 +167,12 @@ describe("createRocketRideRunner", () => {
       ok: false,
       pipelineStatus: "failed",
       lastError: expect.stringContaining(
-        "rebase-fingerprint: Pipeline does not have a source component defined"
+        "tempo-fingerprint: Pipeline does not have a source component defined"
       )
     });
   });
 
-  it("adds sync guidance when RocketRide cannot load the Rebase node", async () => {
+  it("adds sync guidance when RocketRide cannot load the Tempo node", async () => {
     const pipelineDir = await createPipelineDir();
     const runner = createRocketRideRunner({
       uri: "http://127.0.0.1:5565",
@@ -181,7 +181,7 @@ describe("createRocketRideRunner", () => {
         async connect() {},
         async disconnect() {},
         async validate() {
-          throw new Error("Unknown provider rebase_coordination");
+          throw new Error("Unknown provider tempo_coordination");
         },
         async use() {
           return { token: "rr-token" };
@@ -196,11 +196,11 @@ describe("createRocketRideRunner", () => {
     await expect(runner.validateRequiredPipelines?.()).resolves.toMatchObject({
       ok: false,
       pipelineStatus: "failed",
-      lastError: expect.stringContaining("pnpm rebase rocketride:sync")
+      lastError: expect.stringContaining("pnpm tempo rocketride:sync")
     });
   });
 
-  it("preflights the checked-in Rebase pipeline files", async () => {
+  it("preflights the checked-in Tempo pipeline files", async () => {
     const runner = createRocketRideRunner({
       uri: "http://127.0.0.1:5565",
       clientFactory: () => ({
@@ -223,6 +223,68 @@ describe("createRocketRideRunner", () => {
       ok: true,
       pipelineStatus: "validated",
       authoritative: true
+    });
+  });
+
+  it("does not hang startup validation when RocketRide disconnect never settles", async () => {
+    const pipelineDir = await createPipelineDir();
+    const runner = createRocketRideRunner({
+      uri: "http://127.0.0.1:5565",
+      pipelineDir,
+      disconnectTimeoutMs: 5,
+      clientFactory: () => ({
+        async connect() {},
+        async disconnect() {
+          await new Promise(() => undefined);
+        },
+        async validate() {
+          return {};
+        },
+        async use() {
+          return { token: "rr-token" };
+        },
+        async send(_token, data) {
+          return typedOutputForRequest(JSON.parse(String(data)) as Record<string, unknown>);
+        },
+        async terminate() {}
+      })
+    });
+
+    await expect(runner.validateRequiredPipelines?.()).resolves.toMatchObject({
+      ok: true,
+      pipelineStatus: "validated"
+    });
+  });
+
+  it("fails closed instead of hanging when RocketRide send never returns", async () => {
+    const pipelineDir = await createPipelineDir();
+    const runner = createRocketRideRunner({
+      uri: "http://127.0.0.1:5565",
+      pipelineDir,
+      operationTimeoutMs: 5,
+      disconnectTimeoutMs: 5,
+      clientFactory: () => ({
+        async connect() {},
+        async disconnect() {},
+        async validate() {
+          return {};
+        },
+        async use() {
+          return { token: "rr-token" };
+        },
+        async send() {
+          await new Promise(() => undefined);
+        },
+        async terminate() {}
+      })
+    });
+
+    await expect(runner.validateRequiredPipelines?.()).resolves.toMatchObject({
+      ok: false,
+      pipelineStatus: "failed",
+      lastError: expect.stringContaining(
+        "tempo-fingerprint: tempo-fingerprint send timed out"
+      )
     });
   });
 
@@ -250,7 +312,7 @@ describe("createRocketRideRunner", () => {
     });
 
     await expect(
-      runner.runPipeline("rebase-fingerprint", { worktreeId: "wt-a" })
+      runner.runPipeline("tempo-fingerprint", { worktreeId: "wt-a" })
     ).resolves.toEqual({
       runId: "rr-token",
       output: { ok: true }
@@ -270,7 +332,7 @@ function executablePipeline(name: string) {
         config: {
           key: "webhook://*",
           mode: "Source",
-          name: "Rebase Input",
+          name: "Tempo Input",
           include: [{ path: "*" }],
           parameters: {
             endpoint: "/pipe/process",
@@ -282,8 +344,8 @@ function executablePipeline(name: string) {
         ui: {}
       },
       {
-        id: "rebase_1",
-        provider: "rebase_coordination",
+        id: "tempo_1",
+        provider: "tempo_coordination",
         config: {
           operation: operationForPipeline(name)
         },
@@ -302,7 +364,7 @@ function executablePipeline(name: string) {
         input: [
           {
             lane: "text",
-            from: "rebase_1"
+            from: "tempo_1"
           }
         ]
       }
@@ -311,7 +373,7 @@ function executablePipeline(name: string) {
 }
 
 function operationForPipeline(name: string): string {
-  return name.replace(/^rebase-/, "");
+  return name.replace(/^tempo-/, "");
 }
 
 function typedOutputForRequest(request: Record<string, unknown>) {

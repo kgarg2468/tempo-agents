@@ -19,7 +19,7 @@ export async function findGitRoot(cwd: string): Promise<string> {
     });
     return stdout.trim();
   } catch (_error) {
-    throw new Error(`Rebase must be run inside a git repository: ${cwd}`);
+    throw new Error(`Tempo must be run inside a git repository: ${cwd}`);
   }
 }
 

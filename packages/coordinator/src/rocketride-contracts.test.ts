@@ -30,33 +30,33 @@ describe("RocketRide typed output contracts", () => {
 
   it("rejects invalid required outputs instead of accepting opaque responses", () => {
     expect(() => parseWorkOrderRunOutput({ ok: true })).toThrow(
-      "RocketRide rebase-work-order output did not match the required schema"
+      "RocketRide tempo-work-order output did not match the required schema"
     );
   });
 
   it("uses raw smoke inputs that must be transformed by RocketRide", () => {
     expect(() =>
-      parseFingerprintRunOutput(smokeInputForPipeline("rebase-fingerprint"))
-    ).toThrow("RocketRide rebase-fingerprint output did not match");
+      parseFingerprintRunOutput(smokeInputForPipeline("tempo-fingerprint"))
+    ).toThrow("RocketRide tempo-fingerprint output did not match");
     expect(() =>
-      parseCollisionRunOutput(smokeInputForPipeline("rebase-collision"))
-    ).toThrow("RocketRide rebase-collision output did not match");
+      parseCollisionRunOutput(smokeInputForPipeline("tempo-collision"))
+    ).toThrow("RocketRide tempo-collision output did not match");
     expect(() =>
-      parseWorkOrderRunOutput(smokeInputForPipeline("rebase-work-order"))
-    ).toThrow("RocketRide rebase-work-order output did not match");
+      parseWorkOrderRunOutput(smokeInputForPipeline("tempo-work-order"))
+    ).toThrow("RocketRide tempo-work-order output did not match");
     expect(() =>
-      parseMergeRiskRunOutput(smokeInputForPipeline("rebase-merge-risk"))
-    ).toThrow("RocketRide rebase-merge-risk output did not match");
+      parseMergeRiskRunOutput(smokeInputForPipeline("tempo-merge-risk"))
+    ).toThrow("RocketRide tempo-merge-risk output did not match");
   });
 
   it("rejects live RocketRide metadata-only responses", () => {
     expect(() =>
       parseFingerprintRunOutput({
-        name: "rebase-fingerprint.input.json",
+        name: "tempo-fingerprint.input.json",
         path: "",
         objectId: "metadata-only"
       })
-    ).toThrow("RocketRide rebase-fingerprint output did not match");
+    ).toThrow("RocketRide tempo-fingerprint output did not match");
   });
 
   it("parses predictive merge-risk output with evidence and blocking work orders", () => {
@@ -112,7 +112,7 @@ describe("RocketRide typed output contracts", () => {
     expect(output.workOrders[0]?.role).toBe("integration_owner");
   });
 
-  it("rejects the old merge-risk placeholder shape", () => {
+  it("rejects incomplete merge-risk output", () => {
     expect(() =>
       parseMergeRiskRunOutput({
         mergeRisk: {
@@ -122,7 +122,7 @@ describe("RocketRide typed output contracts", () => {
           requiredWorkOrders: []
         }
       })
-    ).toThrow("RocketRide rebase-merge-risk output did not match");
+    ).toThrow("RocketRide tempo-merge-risk output did not match");
   });
 });
 

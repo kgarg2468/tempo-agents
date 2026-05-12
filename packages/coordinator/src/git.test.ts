@@ -11,10 +11,10 @@ import {
 } from "./git.js";
 
 async function createRepo() {
-  const dir = await mkdtemp(path.join(tmpdir(), "rebase-git-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "tempo-git-"));
   await execa("git", ["init", "-b", "main"], { cwd: dir });
-  await execa("git", ["config", "user.email", "rebase@example.com"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Rebase Test"], { cwd: dir });
+  await execa("git", ["config", "user.email", "tempo@example.com"], { cwd: dir });
+  await execa("git", ["config", "user.name", "Tempo Test"], { cwd: dir });
   await writeFile(path.join(dir, "README.md"), "hello\n");
   await execa("git", ["add", "README.md"], { cwd: dir });
   await execa("git", ["commit", "-m", "init"], { cwd: dir });
@@ -32,7 +32,7 @@ describe("git helpers", () => {
 
   it("parses git worktree list porcelain output", async () => {
     const repo = await createRepo();
-    const sibling = path.join(path.dirname(repo), `rebase-wt-a-${path.basename(repo)}`);
+    const sibling = path.join(path.dirname(repo), `tempo-wt-a-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", sibling], { cwd: repo });
 
     const worktrees = await listWorktrees(repo);

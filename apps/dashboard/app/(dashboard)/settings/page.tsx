@@ -1,8 +1,8 @@
 import { PageHeader } from "../../../components/page-header";
-import { getRebaseSnapshot } from "../../../lib/rebase-api";
+import { getTempoSnapshot } from "../../../lib/tempo-api";
 
 export default async function SettingsPage() {
-  const snapshot = await getRebaseSnapshot();
+  const snapshot = await getTempoSnapshot();
   const { settings } = snapshot;
 
   return (
@@ -36,7 +36,7 @@ export default async function SettingsPage() {
             <span className="muted small">setup command available</span>
           </div>
           <p className="muted small">
-            codex mcp add rebase --url {settings.codex.mcpUrl}
+            codex mcp add tempo --url {settings.codex.mcpUrl}
           </p>
         </div>
       </div>

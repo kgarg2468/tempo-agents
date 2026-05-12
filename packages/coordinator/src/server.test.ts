@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
-import type { RebaseConflict } from "@rebase/shared";
+import type { TempoConflict } from "@tempo/shared";
 import { createCoordinatorApp } from "./server.js";
 
 async function createRepo() {
-  const dir = await mkdtemp(path.join(tmpdir(), "rebase-server-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "tempo-server-"));
   await execa("git", ["init", "-b", "main"], { cwd: dir });
-  await execa("git", ["config", "user.email", "rebase@example.com"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Rebase Test"], { cwd: dir });
+  await execa("git", ["config", "user.email", "tempo@example.com"], { cwd: dir });
+  await execa("git", ["config", "user.name", "Tempo Test"], { cwd: dir });
   await writeFile(path.join(dir, "README.md"), "hello\n");
   await execa("git", ["add", "README.md"], { cwd: dir });
   await execa("git", ["commit", "-m", "init"], { cwd: dir });
@@ -18,10 +18,10 @@ async function createRepo() {
 }
 
 async function createContractRepo() {
-  const dir = await mkdtemp(path.join(tmpdir(), "rebase-server-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "tempo-server-"));
   await execa("git", ["init", "-b", "main"], { cwd: dir });
-  await execa("git", ["config", "user.email", "rebase@example.com"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Rebase Test"], { cwd: dir });
+  await execa("git", ["config", "user.email", "tempo@example.com"], { cwd: dir });
+  await execa("git", ["config", "user.name", "Tempo Test"], { cwd: dir });
   await mkdir(path.join(dir, "src", "db"), { recursive: true });
   await writeFile(
     path.join(dir, "src", "db", "schema.ts"),
@@ -43,7 +43,7 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token"
     });
     apps.push(app);
@@ -63,7 +63,7 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token"
     });
     apps.push(app);
@@ -81,7 +81,7 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
@@ -110,7 +110,7 @@ describe("coordinator server", () => {
       ok: true,
       sessionId: "codex-session-1"
     });
-    expect(app.rebase.store.listAgentSessions(app.rebase.repoId)[0]).toMatchObject({
+    expect(app.tempo.store.listAgentSessions(app.tempo.repoId)[0]).toMatchObject({
       id: "codex-session-1",
       agentKind: "codex",
       displayName: "Codex A"
@@ -130,8 +130,8 @@ describe("coordinator server", () => {
 
   it("runs analysis through the coordinator and exposes persisted results", async () => {
     const repoRoot = await createContractRepo();
-    const wtA = path.join(path.dirname(repoRoot), `rebase-server-a-${path.basename(repoRoot)}`);
-    const wtB = path.join(path.dirname(repoRoot), `rebase-server-b-${path.basename(repoRoot)}`);
+    const wtA = path.join(path.dirname(repoRoot), `tempo-server-a-${path.basename(repoRoot)}`);
+    const wtB = path.join(path.dirname(repoRoot), `tempo-server-b-${path.basename(repoRoot)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repoRoot });
     await execa("git", ["worktree", "add", "-b", "agent-b", wtB], { cwd: repoRoot });
     await writeFile(
@@ -144,7 +144,7 @@ describe("coordinator server", () => {
     );
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
@@ -196,14 +196,14 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-missing",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: path.join(path.dirname(repoRoot), "removed"),
       branch: "removed",
       headSha: "abc123",
@@ -225,15 +225,15 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
     const now = 1778000000000;
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-main",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: repoRoot,
       branch: "main",
       headSha: "abc123",
@@ -241,9 +241,9 @@ describe("coordinator server", () => {
       status: "active",
       lastObservedAt: now
     });
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-missing",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: path.join(path.dirname(repoRoot), "removed"),
       branch: "old-agent",
       headSha: "def456",
@@ -251,9 +251,9 @@ describe("coordinator server", () => {
       status: "missing",
       lastObservedAt: now
     });
-    app.rebase.store.upsertFingerprint({
+    app.tempo.store.upsertFingerprint({
       id: "old-fingerprint",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-missing",
       diffHash: "old-diff",
       createdAt: now,
@@ -274,9 +274,9 @@ describe("coordinator server", () => {
       confidence: 0.8,
       source: "heuristic"
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "old-agent",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-missing",
       agentKind: "codex",
       cwd: path.join(path.dirname(repoRoot), "removed"),
@@ -285,9 +285,9 @@ describe("coordinator server", () => {
       lastCheckpointAt: now,
       joinedAt: now
     });
-    app.rebase.store.upsertConflict({
+    app.tempo.store.upsertConflict({
       id: "old-conflict",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       status: "resolved",
       risk: "high",
       confidence: 0.8,
@@ -302,9 +302,9 @@ describe("coordinator server", () => {
       createdAt: now,
       updatedAt: now
     });
-    app.rebase.store.upsertConflictDecision({
+    app.tempo.store.upsertConflictDecision({
       id: "old-decision",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       conflictId: "old-conflict",
       selectedOptionId: "split",
       selectedOptionTitle: "Split ownership",
@@ -315,9 +315,9 @@ describe("coordinator server", () => {
       createdAt: now,
       updatedAt: now
     });
-    app.rebase.store.upsertAdvisory({
+    app.tempo.store.upsertAdvisory({
       id: "old-advisory",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       conflictId: "old-conflict",
       source: "heuristic",
       options: [
@@ -331,9 +331,9 @@ describe("coordinator server", () => {
       ],
       createdAt: now
     });
-    app.rebase.store.upsertContractPublication({
+    app.tempo.store.upsertContractPublication({
       id: "old-publication",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       conflictId: "old-conflict",
       ownerAgentSessionId: "old-agent",
       surface: "Task contract",
@@ -341,9 +341,9 @@ describe("coordinator server", () => {
       files: ["src/shared/task.ts"],
       createdAt: now
     });
-    app.rebase.store.upsertIntervention({
+    app.tempo.store.upsertIntervention({
       id: "old-intervention",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       conflictId: "old-conflict",
       targetAgentSessionIds: ["old-agent"],
       draft: "Old draft.",
@@ -392,7 +392,7 @@ describe("coordinator server", () => {
     await execa("git", ["commit", "-m", "add next env"], { cwd: repoRoot });
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
@@ -447,14 +447,14 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-main",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: repoRoot,
       branch: "main",
       headSha: "abc123",
@@ -466,9 +466,9 @@ describe("coordinator server", () => {
       ["new-fingerprint", 1778000000002, "src/shared/task.ts"],
       ["old-fingerprint", 1778000000000, "src/db/schema.ts"]
     ] as const) {
-      app.rebase.store.upsertFingerprint({
+      app.tempo.store.upsertFingerprint({
         id,
-        repoId: app.rebase.repoId,
+        repoId: app.tempo.repoId,
         worktreeId: "wt-main",
         diffHash: id,
         createdAt,
@@ -501,15 +501,15 @@ describe("coordinator server", () => {
     const repoRoot = await createContractRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
     const now = 1778000000000;
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-feature",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: "/feature",
       branch: "feature",
       headSha: "feature-sha",
@@ -517,9 +517,9 @@ describe("coordinator server", () => {
       status: "active",
       lastObservedAt: now
     });
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-main",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: "/main",
       branch: "main",
       headSha: "main-sha",
@@ -527,9 +527,9 @@ describe("coordinator server", () => {
       status: "active",
       lastObservedAt: now
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-feature",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-feature",
       agentKind: "codex",
       cwd: "/feature",
@@ -537,9 +537,9 @@ describe("coordinator server", () => {
       lastCheckpointAt: now,
       joinedAt: now
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-integration",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-main",
       agentKind: "codex",
       coordinationRole: "integration",
@@ -548,9 +548,9 @@ describe("coordinator server", () => {
       lastCheckpointAt: now,
       joinedAt: now
     });
-    app.rebase.store.upsertConflict({
+    app.tempo.store.upsertConflict({
       id: "conflict-1",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       status: "open",
       risk: "high",
       confidence: 0.8,
@@ -581,14 +581,14 @@ describe("coordinator server", () => {
     const repoRoot = await createContractRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    const conflict: RebaseConflict = {
+    const conflict: TempoConflict = {
       id: "conflict-1",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       status: "open",
       risk: "medium",
       confidence: 0.8,
@@ -609,7 +609,7 @@ describe("coordinator server", () => {
       createdAt: 1778000000000,
       updatedAt: 1778000000000
     };
-    app.rebase.store.upsertConflict(conflict);
+    app.tempo.store.upsertConflict(conflict);
 
     const advisory = await app.inject({
       method: "POST",
@@ -635,8 +635,8 @@ describe("coordinator server", () => {
     expect(intervention.json().interventions[0].targetAgentSessionIds).toEqual([
       "session-1"
     ]);
-    expect(app.rebase.store.listInterventions(app.rebase.repoId)).toHaveLength(2);
-    expect(app.rebase.store.listInterventions(app.rebase.repoId)[0]?.editedDirection).toBe(
+    expect(app.tempo.store.listInterventions(app.tempo.repoId)).toHaveLength(2);
+    expect(app.tempo.store.listInterventions(app.tempo.repoId)[0]?.editedDirection).toBe(
       "Pause and agree the Task model before route edits."
     );
   });
@@ -645,14 +645,14 @@ describe("coordinator server", () => {
     const repoRoot = await createContractRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    const conflict: RebaseConflict = {
+    const conflict: TempoConflict = {
       id: "conflict-1",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       status: "open",
       risk: "high",
       confidence: 0.8,
@@ -673,10 +673,10 @@ describe("coordinator server", () => {
       createdAt: 1778000000000,
       updatedAt: 1778000000000
     };
-    app.rebase.store.upsertConflict(conflict);
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertConflict(conflict);
+    app.tempo.store.upsertAgentSession({
       id: "agent-priority",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-priority",
       agentKind: "codex",
       cwd: "/repo-priority",
@@ -685,9 +685,9 @@ describe("coordinator server", () => {
       lastCheckpointAt: 1778000000000,
       joinedAt: 1778000000000
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-due",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-due",
       agentKind: "codex",
       cwd: "/repo-due",
@@ -729,14 +729,14 @@ describe("coordinator server", () => {
     const repoRoot = await createContractRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-owner",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: "/owner",
       branch: "owner",
       headSha: "owner-sha",
@@ -744,9 +744,9 @@ describe("coordinator server", () => {
       status: "active",
       lastObservedAt: 1778000000000
     });
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-adapter",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: "/adapter",
       branch: "adapter",
       headSha: "adapter-sha",
@@ -754,9 +754,9 @@ describe("coordinator server", () => {
       status: "active",
       lastObservedAt: 1778000000000
     });
-    app.rebase.store.upsertConflict({
+    app.tempo.store.upsertConflict({
       id: "conflict-1",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       status: "open",
       risk: "high",
       confidence: 0.8,
@@ -771,9 +771,9 @@ describe("coordinator server", () => {
       createdAt: 1778000000000,
       updatedAt: 1778000000000
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-owner",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-owner",
       agentKind: "codex",
       cwd: "/owner",
@@ -781,9 +781,9 @@ describe("coordinator server", () => {
       lastCheckpointAt: 1778000000000,
       joinedAt: 1778000000000
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-adapter",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-adapter",
       agentKind: "codex",
       cwd: "/adapter",
@@ -830,14 +830,14 @@ describe("coordinator server", () => {
     const repoRoot = await createContractRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-owner",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: "/owner",
       branch: "owner",
       headSha: "owner-sha",
@@ -845,9 +845,9 @@ describe("coordinator server", () => {
       status: "active",
       lastObservedAt: 1778000000000
     });
-    app.rebase.store.upsertWorktree({
+    app.tempo.store.upsertWorktree({
       id: "wt-adapter",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       path: "/adapter",
       branch: "adapter",
       headSha: "adapter-sha",
@@ -855,9 +855,9 @@ describe("coordinator server", () => {
       status: "active",
       lastObservedAt: 1778000000000
     });
-    app.rebase.store.upsertConflict({
+    app.tempo.store.upsertConflict({
       id: "conflict-1",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       status: "open",
       risk: "high",
       confidence: 0.8,
@@ -872,9 +872,9 @@ describe("coordinator server", () => {
       createdAt: 1778000000000,
       updatedAt: 1778000000000
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-owner",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-owner",
       agentKind: "codex",
       cwd: "/owner",
@@ -882,9 +882,9 @@ describe("coordinator server", () => {
       lastCheckpointAt: 1778000000000,
       joinedAt: 1778000000000
     });
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-adapter",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-adapter",
       agentKind: "codex",
       cwd: "/adapter",
@@ -939,14 +939,14 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    app.rebase.store.upsertAgentSession({
+    app.tempo.store.upsertAgentSession({
       id: "agent-1",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       worktreeId: "wt-1",
       agentKind: "codex",
       coordinationRole: "feature",
@@ -971,14 +971,14 @@ describe("coordinator server", () => {
     const repoRoot = await createRepo();
     const app = await createCoordinatorApp({
       repoRoot,
-      dbPath: path.join(repoRoot, ".rebase", "rebase.sqlite"),
+      dbPath: path.join(repoRoot, ".tempo", "tempo.sqlite"),
       token: "test-token",
       startWatcher: false
     });
     apps.push(app);
-    app.rebase.store.upsertMergeRiskAssessment({
+    app.tempo.store.upsertMergeRiskAssessment({
       id: "merge-risk-1",
-      repoId: app.rebase.repoId,
+      repoId: app.tempo.repoId,
       episodeId: "episode-1",
       status: "blocked",
       risk: "high",

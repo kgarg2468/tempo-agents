@@ -4,10 +4,10 @@ import {
   recordDecision,
   updateConflictStatus
 } from "../../../lib/actions";
-import { getRebaseSnapshot } from "../../../lib/rebase-api";
+import { getTempoSnapshot } from "../../../lib/tempo-api";
 
 export default async function ConflictsPage() {
-  const snapshot = await getRebaseSnapshot();
+  const snapshot = await getTempoSnapshot();
   const agentsByWorktree = new Map(
     snapshot.agents.flatMap((agent) =>
       agent.worktreeId ? [[agent.worktreeId, agent.id] as const] : []
@@ -209,7 +209,7 @@ export default async function ConflictsPage() {
               <div className="decision-timeline">
                 <span className="muted small">Choices closed</span>
                 <p>
-                  Rebase will deliver queued directions for this decision through
+                  Tempo will deliver queued directions for this decision through
                   checkpoint or wait calls.
                 </p>
               </div>
@@ -244,7 +244,7 @@ export default async function ConflictsPage() {
                     <p className="muted small">{option.rationale}</p>
                     {splitOwnership ? (
                       <p className="muted small">
-                        Rebase sends complementary owner and adapter plans. Recommended
+                        Tempo sends complementary owner and adapter plans. Recommended
                         owner: {recommendedOwner?.displayName ?? "choose one"}.
                       </p>
                     ) : null}
@@ -305,14 +305,14 @@ export default async function ConflictsPage() {
   );
 }
 
-function labelForConflict(conflict: Awaited<ReturnType<typeof getRebaseSnapshot>>["conflicts"][number]) {
+function labelForConflict(conflict: Awaited<ReturnType<typeof getTempoSnapshot>>["conflicts"][number]) {
   if (conflict.classification?.kind === "coordination_notice") {
     return "coordination notice";
   }
   return `${conflict.risk} risk`;
 }
 
-function riskClass(conflict: Awaited<ReturnType<typeof getRebaseSnapshot>>["conflicts"][number]) {
+function riskClass(conflict: Awaited<ReturnType<typeof getTempoSnapshot>>["conflicts"][number]) {
   if (conflict.classification?.kind === "coordination_notice") return "risk-notice";
   return conflict.risk === "high" ? "risk-high" : "risk-medium";
 }
@@ -321,9 +321,9 @@ function deliveryStatusForWorktree(
   worktreeId: string,
   agentsByWorktreeId: Map<
     string,
-    Awaited<ReturnType<typeof getRebaseSnapshot>>["agents"][number]
+    Awaited<ReturnType<typeof getTempoSnapshot>>["agents"][number]
   >,
-  deliveries: Awaited<ReturnType<typeof getRebaseSnapshot>>["interventions"]
+  deliveries: Awaited<ReturnType<typeof getTempoSnapshot>>["interventions"]
 ): string {
   const agent = agentsByWorktreeId.get(worktreeId);
   if (!agent) return `unreachable ${worktreeId.slice(0, 7)}: no joined agent`;

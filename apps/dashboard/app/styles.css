@@ -608,7 +608,7 @@ textarea {
   color: var(--muted);
 }
 
-.rebase-node {
+.tempo-node {
   min-width: 188px;
   max-width: 240px;
   border: 1px solid var(--line-strong);
@@ -623,19 +623,19 @@ textarea {
     transform 160ms ease;
 }
 
-.rebase-node:hover {
+.tempo-node:hover {
   transform: translateY(-1px);
   border-color: rgba(139, 211, 255, 0.42);
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
 }
 
-.rebase-node-label {
+.tempo-node-label {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
-.rebase-node strong {
+.tempo-node strong {
   display: block;
   overflow: hidden;
   color: var(--text);
@@ -645,27 +645,27 @@ textarea {
   white-space: nowrap;
 }
 
-.rebase-node-subtitle {
+.tempo-node-subtitle {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.rebase-edge-risk path {
+.tempo-edge-risk path {
   stroke: var(--orange);
   stroke-width: 3;
   filter: drop-shadow(0 0 8px rgba(247, 178, 103, 0.42));
   animation: pulse-risk 1.5s ease-in-out infinite;
 }
 
-.rebase-edge-active path {
+.tempo-edge-active path {
   stroke: var(--accent);
   stroke-width: 2.2;
   filter: drop-shadow(0 0 5px rgba(139, 211, 255, 0.22));
 }
 
-.rebase-node-risk {
+.tempo-node-risk {
   border-color: rgba(247, 178, 103, 0.86);
   box-shadow:
     0 16px 34px rgba(0, 0, 0, 0.32),

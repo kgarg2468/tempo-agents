@@ -1,19 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { coordinatorUrl } from "./rebase-api";
+import { coordinatorUrl } from "./tempo-api";
 
 export async function updateConflictStatus(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   const status = String(formData.get("status") ?? "");
   await coordinatorMutation(`/api/conflicts/${id}/status`, { status });
-  revalidateRebasePages();
+  revalidateTempoPages();
 }
 
 export async function generateAdvisory(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   await coordinatorMutation(`/api/conflicts/${id}/advisory`, {});
-  revalidateRebasePages();
+  revalidateTempoPages();
 }
 
 export async function sendIntervention(formData: FormData) {
@@ -32,7 +32,7 @@ export async function sendIntervention(formData: FormData) {
     editedDirection,
     ...(ownerAgentSessionId ? { ownerAgentSessionId } : {})
   });
-  revalidateRebasePages();
+  revalidateTempoPages();
 }
 
 export async function recordDecision(formData: FormData) {
@@ -52,13 +52,13 @@ export async function recordDecision(formData: FormData) {
     ...(ownerAgentSessionId ? { ownerAgentSessionId } : {}),
     createdBy: "dashboard"
   });
-  revalidateRebasePages();
+  revalidateTempoPages();
 }
 
 async function coordinatorMutation(pathname: string, payload: unknown) {
-  const token = process.env.REBASE_LOCAL_TOKEN;
+  const token = process.env.TEMPO_LOCAL_TOKEN;
   if (!token) {
-    throw new Error("REBASE_LOCAL_TOKEN is required for dashboard mutations.");
+    throw new Error("TEMPO_LOCAL_TOKEN is required for dashboard mutations.");
   }
   const response = await fetch(`${coordinatorUrl}${pathname}`, {
     method: "POST",
@@ -70,11 +70,11 @@ async function coordinatorMutation(pathname: string, payload: unknown) {
     cache: "no-store"
   });
   if (!response.ok) {
-    throw new Error(`Rebase coordinator returned ${response.status} for ${pathname}`);
+    throw new Error(`Tempo coordinator returned ${response.status} for ${pathname}`);
   }
 }
 
-function revalidateRebasePages() {
+function revalidateTempoPages() {
   revalidatePath("/sessions");
   revalidatePath("/conflicts");
   revalidatePath("/interventions");

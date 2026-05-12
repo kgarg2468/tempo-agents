@@ -1,8 +1,8 @@
-import type { AgentSession, Fingerprint, RebaseConflict } from "@rebase/shared";
+import type { AgentSession, Fingerprint, TempoConflict } from "@tempo/shared";
 import { describe, expect, it } from "vitest";
 import { buildAgentSpecificDirective } from "./guidance.js";
 
-const conflict: RebaseConflict = {
+const conflict: TempoConflict = {
   id: "conflict-1",
   repoId: "repo-1",
   status: "open",

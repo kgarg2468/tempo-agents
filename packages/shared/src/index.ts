@@ -54,7 +54,7 @@ export const repoSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number()
 });
-export type RebaseRepo = z.infer<typeof repoSchema>;
+export type TempoRepo = z.infer<typeof repoSchema>;
 
 export const worktreeSchema = z.object({
   id: z.string().min(1),
@@ -66,7 +66,7 @@ export const worktreeSchema = z.object({
   status: z.enum(["active", "missing", "unjoined"]),
   lastObservedAt: z.number()
 });
-export type RebaseWorktree = z.infer<typeof worktreeSchema>;
+export type TempoWorktree = z.infer<typeof worktreeSchema>;
 
 export const agentSessionSchema = z.object({
   id: z.string().min(1),
@@ -174,7 +174,7 @@ export const conflictSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number()
 });
-export type RebaseConflict = z.infer<typeof conflictSchema>;
+export type TempoConflict = z.infer<typeof conflictSchema>;
 
 export const hookEventKindSchema = z.enum([
   "session_start",
@@ -274,6 +274,7 @@ export const graphNodeKindSchema = z.enum([
   "conflict",
   "decision",
   "episode",
+  "publication",
   "work_order"
 ]);
 export type GraphNodeKind = z.infer<typeof graphNodeKindSchema>;
@@ -297,7 +298,7 @@ export const graphNodeSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).default({}),
   updatedAt: z.number()
 });
-export type RebaseGraphNode = z.infer<typeof graphNodeSchema>;
+export type TempoGraphNode = z.infer<typeof graphNodeSchema>;
 
 export const graphEdgeSchema = z.object({
   id: z.string().min(1),
@@ -308,7 +309,16 @@ export const graphEdgeSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).default({}),
   updatedAt: z.number()
 });
-export type RebaseGraphEdge = z.infer<typeof graphEdgeSchema>;
+export type TempoGraphEdge = z.infer<typeof graphEdgeSchema>;
+
+export const fileSnapshotSchema = z.object({
+  path: z.string().min(1),
+  sha256: z.string().min(1),
+  content: z.string().optional(),
+  sizeBytes: z.number().int().min(0),
+  capturedAt: z.number()
+});
+export type FileSnapshot = z.infer<typeof fileSnapshotSchema>;
 
 export const contractPublicationSchema = z.object({
   id: z.string().min(1),
@@ -318,6 +328,8 @@ export const contractPublicationSchema = z.object({
   surface: z.string().min(1),
   shapeSummary: z.string().min(1).max(2000),
   files: z.array(z.string().min(1)).default([]),
+  snapshotSetId: z.string().min(1).optional(),
+  fileSnapshots: z.array(fileSnapshotSchema).optional(),
   createdAt: z.number()
 });
 export type ContractPublication = z.infer<typeof contractPublicationSchema>;
@@ -476,6 +488,8 @@ export const workOrderSchema = z.object({
   title: z.string().min(1).max(200),
   summary: z.string().min(1).max(2000),
   requiredContract: z.string().min(1).max(4000).optional(),
+  requiredSnapshotPublicationId: z.string().min(1).optional(),
+  requiredFeatureTerms: z.array(z.string().min(1)).optional(),
   allowedFiles: z.array(z.string().min(1)).default([]),
   blockedFiles: z.array(z.string().min(1)).default([]),
   sharedFiles: z.array(z.string().min(1)).default([]),
@@ -558,4 +572,4 @@ export const eventSchema = z.object({
   payload: z.record(z.string(), z.unknown()).default({}),
   createdAt: z.number()
 });
-export type RebaseEvent = z.infer<typeof eventSchema>;
+export type TempoEvent = z.infer<typeof eventSchema>;

@@ -4,14 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-$ROOT/test-artifacts/submission-$RUN_ID}"
-REBASE_URL="${REBASE_URL:-http://127.0.0.1:3747}"
+TEMPO_URL="${TEMPO_URL:-http://127.0.0.1:3747}"
 ROCKETRIDE_URI="${ROCKETRIDE_URI:-http://127.0.0.1:5565}"
 
 mkdir -p "$EVIDENCE_DIR"/{logs,snapshots,oracle}
 
 cd "$ROOT"
 
-git status --short --branch | tee "$EVIDENCE_DIR/logs/rebase-git-status.txt"
+git status --short --branch | tee "$EVIDENCE_DIR/logs/tempo-git-status.txt"
 pnpm typecheck | tee "$EVIDENCE_DIR/logs/typecheck.txt"
 pnpm test | tee "$EVIDENCE_DIR/logs/test.txt"
 pnpm lint | tee "$EVIDENCE_DIR/logs/lint.txt"
@@ -32,19 +32,19 @@ for endpoint in \
   api/merge-risks \
   api/decisions
 do
-  curl -sS "$REBASE_URL/$endpoint" \
+  curl -sS "$TEMPO_URL/$endpoint" \
     > "$EVIDENCE_DIR/snapshots/${endpoint//\//-}.json" || true
 done
 
 cat > "$EVIDENCE_DIR/README.md" <<EOF
-# Rebase Submission Evidence
+# Tempo Submission Evidence
 
 Run ID: \`$RUN_ID\`
 
-This bundle contains local gate logs plus best-effort RocketRide/Rebase API
+This bundle contains local gate logs plus best-effort RocketRide/Tempo API
 snapshots. A submission-ready run still requires the live three-agent todo
 scenario to converge to safe/coordinated and the disposable external Git oracle
-to pass after Rebase convergence.
+to pass after Tempo convergence.
 EOF
 
 echo "Evidence directory: $EVIDENCE_DIR"

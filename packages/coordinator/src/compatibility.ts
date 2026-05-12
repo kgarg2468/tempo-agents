@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
-import type { CompatibilityClassification, Fingerprint } from "@rebase/shared";
-import { compatibilityClassificationSchema } from "@rebase/shared";
+import type { CompatibilityClassification, Fingerprint } from "@tempo/shared";
+import { compatibilityClassificationSchema } from "@tempo/shared";
 
 export interface CompatibilityInput {
   left: Fingerprint;

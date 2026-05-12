@@ -1,5 +1,5 @@
-import { detectConflicts } from "@rebase/coordinator";
-import type { Fingerprint } from "@rebase/shared";
+import { detectConflicts } from "@tempo/coordinator";
+import type { Fingerprint } from "@tempo/shared";
 
 export interface EvalFixture {
   id: string;

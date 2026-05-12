@@ -4,15 +4,15 @@ import type {
   ContractPublication,
   CoordinationEpisode,
   MergeContract,
-  RebaseConflict,
+  TempoConflict,
   RiskLevel,
   WorkOrder
-} from "@rebase/shared";
+} from "@tempo/shared";
 import { stableId } from "./ids.js";
 
 export interface BuildCoordinationEpisodesInput {
   repoId: string;
-  conflicts: RebaseConflict[];
+  conflicts: TempoConflict[];
   agents: AgentSession[];
   decisions: ConflictDecision[];
   publications: ContractPublication[];
@@ -71,9 +71,7 @@ export function buildCoordinationEpisodes(
     });
     const ownerAgentSessionId = selectOwnerAgentSessionId({
       conflicts: group,
-      agents: affectedAgents,
-      decisions: input.decisions,
-      existingEpisode
+      decisions: input.decisions
     });
     const mergeContract = buildMergeContract({
       repoId: input.repoId,
@@ -111,7 +109,7 @@ export function buildCoordinationEpisodes(
     };
     episodes.push(episode);
 
-    if (coordinated) continue;
+    if (coordinated || !ownerAgentSessionId) continue;
     for (const agent of affectedAgents) {
       workOrders.push(
         buildWorkOrder({
@@ -132,14 +130,14 @@ export function buildCoordinationEpisodes(
   return { episodes, workOrders };
 }
 
-function connectedConflictGroups(conflicts: RebaseConflict[]): RebaseConflict[][] {
-  const bySurface = new Map<string, RebaseConflict[]>();
+function connectedConflictGroups(conflicts: TempoConflict[]): TempoConflict[][] {
+  const bySurface = new Map<string, TempoConflict[]>();
   for (const conflict of conflicts) {
     const key = conflict.primarySurface || "shared surface";
     bySurface.set(key, [...(bySurface.get(key) ?? []), conflict]);
   }
 
-  const groups: RebaseConflict[][] = [];
+  const groups: TempoConflict[][] = [];
   for (const surfaceConflicts of bySurface.values()) {
     const remaining = new Set(surfaceConflicts.map((conflict) => conflict.id));
     const byId = new Map(surfaceConflicts.map((conflict) => [conflict.id, conflict]));
@@ -177,7 +175,7 @@ function connectedConflictGroups(conflicts: RebaseConflict[]): RebaseConflict[][
       groups.push(
         [...componentIds]
           .map((id) => byId.get(id))
-          .filter((conflict): conflict is RebaseConflict => Boolean(conflict))
+          .filter((conflict): conflict is TempoConflict => Boolean(conflict))
           .sort((a, b) => a.id.localeCompare(b.id))
       );
     }
@@ -189,10 +187,8 @@ function connectedConflictGroups(conflicts: RebaseConflict[]): RebaseConflict[][
 }
 
 function selectOwnerAgentSessionId(input: {
-  conflicts: RebaseConflict[];
-  agents: AgentSession[];
+  conflicts: TempoConflict[];
   decisions: ConflictDecision[];
-  existingEpisode?: CoordinationEpisode | undefined;
 }): string | undefined {
   const conflictIds = new Set(input.conflicts.map((conflict) => conflict.id));
   const activeDecision = input.decisions
@@ -204,24 +200,7 @@ function selectOwnerAgentSessionId(input: {
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
   if (activeDecision?.ownerAgentSessionId) return activeDecision.ownerAgentSessionId;
-  if (
-    input.existingEpisode?.ownerAgentSessionId &&
-    input.agents.some((agent) => agent.id === input.existingEpisode?.ownerAgentSessionId)
-  ) {
-    return input.existingEpisode.ownerAgentSessionId;
-  }
-
-  const recommendedOwnerWorktreeId = input.conflicts
-    .map((conflict) => conflict.classification?.recommendedOwnerWorktreeId)
-    .find(Boolean);
-  if (recommendedOwnerWorktreeId) {
-    const recommended = input.agents.find(
-      (agent) => agent.worktreeId === recommendedOwnerWorktreeId
-    );
-    if (recommended) return recommended.id;
-  }
-
-  return input.agents[0]?.id;
+  return undefined;
 }
 
 function buildMergeContract(input: {
@@ -263,7 +242,7 @@ function buildWorkOrder(input: {
   agent: AgentSession;
   owner?: AgentSession | undefined;
   mergeContract?: MergeContract | undefined;
-  conflicts: RebaseConflict[];
+  conflicts: TempoConflict[];
   createdAt: number;
 }): WorkOrder {
   const role =
@@ -306,7 +285,7 @@ function buildWorkOrder(input: {
     sharedFiles,
     nextCheckpoint:
       role === "contract_owner"
-        ? "Publish the contract shape with rebase_checkpoint before dependent edits."
+        ? "Publish the contract shape with tempo_checkpoint before dependent edits."
         : "Checkpoint after adapting to the owner contract and before final response.",
     createdAt: input.createdAt,
     updatedAt: input.createdAt

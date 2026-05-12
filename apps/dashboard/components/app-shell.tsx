@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="app-shell">
       <EventStreamRefresh />
       <aside className="sidebar">
-        <div className="brand">Rebase</div>
+        <div className="brand">Tempo</div>
         <nav className="nav">
           {navItems.map((item) => {
             const Icon = item.icon;

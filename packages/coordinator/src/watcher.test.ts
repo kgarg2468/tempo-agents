@@ -3,15 +3,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
-import { createRebaseStore } from "./store.js";
-import { createRebaseWatcher } from "./watcher.js";
+import { createTempoStore } from "./store.js";
+import { createTempoWatcher } from "./watcher.js";
 import { worktreeIdFor } from "./ids.js";
 
 async function createRepo() {
-  const dir = await mkdtemp(path.join(tmpdir(), "rebase-watcher-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "tempo-watcher-"));
   await execa("git", ["init", "-b", "main"], { cwd: dir });
-  await execa("git", ["config", "user.email", "rebase@example.com"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Rebase Test"], { cwd: dir });
+  await execa("git", ["config", "user.email", "tempo@example.com"], { cwd: dir });
+  await execa("git", ["config", "user.name", "Tempo Test"], { cwd: dir });
   await mkdir(path.join(dir, "src", "db"), { recursive: true });
   await writeFile(
     path.join(dir, "src", "db", "schema.ts"),
@@ -22,11 +22,11 @@ async function createRepo() {
   return dir;
 }
 
-describe("RebaseWatcher", () => {
+describe("TempoWatcher", () => {
   it("discovers worktrees and persists fingerprints/conflicts from a scan", async () => {
     const repo = await createRepo();
-    const wtA = path.join(path.dirname(repo), `rebase-watch-a-${path.basename(repo)}`);
-    const wtB = path.join(path.dirname(repo), `rebase-watch-b-${path.basename(repo)}`);
+    const wtA = path.join(path.dirname(repo), `tempo-watch-a-${path.basename(repo)}`);
+    const wtB = path.join(path.dirname(repo), `tempo-watch-b-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
     await execa("git", ["worktree", "add", "-b", "agent-b", wtB], { cwd: repo });
     await writeFile(
@@ -38,8 +38,8 @@ describe("RebaseWatcher", () => {
       "export interface Task { id: string; tags: string[] }\n"
     );
 
-    const store = createRebaseStore(":memory:");
-    const watcher = createRebaseWatcher({
+    const store = createTempoStore(":memory:");
+    const watcher = createTempoWatcher({
       repoRoot: repo,
       repoId: "repo-1",
       store,
@@ -66,8 +66,8 @@ describe("RebaseWatcher", () => {
 
   it("runs RocketRide pipelines during analysis and stores run ids on coordination episodes", async () => {
     const repo = await createRepo();
-    const wtA = path.join(path.dirname(repo), `rebase-watch-a-${path.basename(repo)}`);
-    const wtB = path.join(path.dirname(repo), `rebase-watch-b-${path.basename(repo)}`);
+    const wtA = path.join(path.dirname(repo), `tempo-watch-a-${path.basename(repo)}`);
+    const wtB = path.join(path.dirname(repo), `tempo-watch-b-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
     await execa("git", ["worktree", "add", "-b", "agent-b", wtB], { cwd: repo });
     await writeFile(
@@ -82,7 +82,7 @@ describe("RebaseWatcher", () => {
     const realWtB = await realpath(wtB);
     const calls: string[] = [];
 
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
     store.upsertAgentSession({
       id: "agent-a",
       repoId: "repo-1",
@@ -105,7 +105,7 @@ describe("RebaseWatcher", () => {
       lastCheckpointAt: 1778000000000,
       joinedAt: 1778000000001
     });
-    const watcher = createRebaseWatcher({
+    const watcher = createTempoWatcher({
       repoRoot: repo,
       repoId: "repo-1",
       store,
@@ -122,13 +122,13 @@ describe("RebaseWatcher", () => {
         async runPipeline(name: string, input: Record<string, unknown>) {
           calls.push(name);
           const runId = `rr-${name}-${calls.length}`;
-          if (name === "rebase-fingerprint") {
+          if (name === "tempo-fingerprint") {
             return {
               runId,
               output: { fingerprint: fingerprintFromInput(input) }
             };
           }
-          if (name === "rebase-collision") {
+          if (name === "tempo-collision") {
             return {
               runId,
               output: {
@@ -137,13 +137,13 @@ describe("RebaseWatcher", () => {
               }
             };
           }
-          if (name === "rebase-work-order") {
+          if (name === "tempo-work-order") {
             return {
               runId,
               output: {
                 episodes: [
                   rocketRideEpisode(worktreeIdFor(realWtA), worktreeIdFor(realWtB), [
-                    "rr-rebase-collision-3",
+                    "rr-tempo-collision-3",
                     runId
                   ])
                 ],
@@ -173,24 +173,24 @@ describe("RebaseWatcher", () => {
 
     expect(calls).toEqual(
       expect.arrayContaining([
-        "rebase-fingerprint",
-        "rebase-collision",
-        "rebase-work-order",
-        "rebase-merge-risk"
+        "tempo-fingerprint",
+        "tempo-collision",
+        "tempo-work-order",
+        "tempo-merge-risk"
       ])
     );
     expect(store.listCoordinationEpisodes("repo-1")[0]?.rocketRideRunIds).toEqual(
       expect.arrayContaining([
-        "rr-rebase-collision-3",
-        "rr-rebase-work-order-4",
-        "rr-rebase-merge-risk-5"
+        "rr-tempo-collision-3",
+        "rr-tempo-work-order-4",
+        "rr-tempo-merge-risk-5"
       ])
     );
     expect(store.listCoordinationEpisodes("repo-1")[0]?.status).toBe("blocked");
     expect(store.listCoordinationEpisodes("repo-1")[0]?.ownerAgentSessionId).toBeUndefined();
     expect(store.listMergeRiskAssessments("repo-1")[0]).toMatchObject({
       status: "blocked",
-      rocketRideRunId: "rr-rebase-merge-risk-5"
+      rocketRideRunId: "rr-tempo-merge-risk-5"
     });
     expect(store.listConflicts("repo-1")[0]?.summary).toBe(
       "RocketRide found a Task contract overlap."
@@ -207,8 +207,8 @@ describe("RebaseWatcher", () => {
 
   it("marks an episode safe from authoritative RocketRide merge-risk output", async () => {
     const repo = await createRepo();
-    const wtA = path.join(path.dirname(repo), `rebase-watch-a-${path.basename(repo)}`);
-    const wtB = path.join(path.dirname(repo), `rebase-watch-b-${path.basename(repo)}`);
+    const wtA = path.join(path.dirname(repo), `tempo-watch-a-${path.basename(repo)}`);
+    const wtB = path.join(path.dirname(repo), `tempo-watch-b-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
     await execa("git", ["worktree", "add", "-b", "agent-b", wtB], { cwd: repo });
     await writeFile(
@@ -223,7 +223,7 @@ describe("RebaseWatcher", () => {
     const realWtB = await realpath(wtB);
     const leftWorktreeId = worktreeIdFor(realWtA);
     const rightWorktreeId = worktreeIdFor(realWtB);
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
     for (const [id, worktreeId, cwd, joinedAt] of [
       ["agent-a", leftWorktreeId, realWtA, 1778000000000] as const,
       ["agent-b", rightWorktreeId, realWtB, 1778000000001] as const
@@ -240,7 +240,7 @@ describe("RebaseWatcher", () => {
         joinedAt
       });
     }
-    const watcher = createRebaseWatcher({
+    const watcher = createTempoWatcher({
       repoRoot: repo,
       repoId: "repo-1",
       store,
@@ -256,10 +256,10 @@ describe("RebaseWatcher", () => {
         }),
         async runPipeline(name: string, input: Record<string, unknown>) {
           const runId = `rr-${name}`;
-          if (name === "rebase-fingerprint") {
+          if (name === "tempo-fingerprint") {
             return { runId, output: { fingerprint: fingerprintFromInput(input) } };
           }
-          if (name === "rebase-collision") {
+          if (name === "tempo-collision") {
             return {
               runId,
               output: {
@@ -268,7 +268,7 @@ describe("RebaseWatcher", () => {
               }
             };
           }
-          if (name === "rebase-work-order") {
+          if (name === "tempo-work-order") {
             return {
               runId,
               output: {
@@ -315,11 +315,11 @@ describe("RebaseWatcher", () => {
 
   it("marks removed git worktrees as missing on refresh", async () => {
     const repo = await createRepo();
-    const wtA = path.join(path.dirname(repo), `rebase-watch-a-${path.basename(repo)}`);
+    const wtA = path.join(path.dirname(repo), `tempo-watch-a-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
 
-    const store = createRebaseStore(":memory:");
-    const watcher = createRebaseWatcher({
+    const store = createTempoStore(":memory:");
+    const watcher = createTempoWatcher({
       repoRoot: repo,
       repoId: "repo-1",
       store,
@@ -346,8 +346,8 @@ describe("RebaseWatcher", () => {
       "export interface Task { id: string; priority: string }\n"
     );
 
-    const store = createRebaseStore(":memory:");
-    const watcher = createRebaseWatcher({
+    const store = createTempoStore(":memory:");
+    const watcher = createTempoWatcher({
       repoRoot: repo,
       repoId: "repo-1",
       store,
@@ -367,15 +367,15 @@ describe("RebaseWatcher", () => {
     store.close();
   });
 
-  it("ignores generated and Rebase-private paths", () => {
-    const store = createRebaseStore(":memory:");
-    const watcher = createRebaseWatcher({
+  it("ignores generated and Tempo-private paths", () => {
+    const store = createTempoStore(":memory:");
+    const watcher = createTempoWatcher({
       repoRoot: "/tmp/repo",
       repoId: "repo-1",
       store
     });
 
-    expect(watcher.isIgnoredPath("/tmp/repo/.rebase/runtime.json")).toBe(true);
+    expect(watcher.isIgnoredPath("/tmp/repo/.tempo/runtime.json")).toBe(true);
     expect(watcher.isIgnoredPath("/tmp/repo/node_modules/pkg/index.js")).toBe(true);
     expect(watcher.isIgnoredPath("/tmp/repo/next-env.d.ts")).toBe(true);
     expect(watcher.isIgnoredPath("/tmp/repo/tsconfig.tsbuildinfo")).toBe(true);
@@ -398,8 +398,8 @@ describe("RebaseWatcher", () => {
       "import \"./.next/dev/types/routes.d.ts\";\n"
     );
 
-    const store = createRebaseStore(":memory:");
-    const watcher = createRebaseWatcher({
+    const store = createTempoStore(":memory:");
+    const watcher = createTempoWatcher({
       repoRoot: repo,
       repoId: "repo-1",
       store,

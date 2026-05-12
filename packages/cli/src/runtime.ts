@@ -2,42 +2,44 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import { RocketRideClient } from "rocketride";
-import { findGitRoot } from "@rebase/coordinator";
+import { findGitRoot } from "@tempo/coordinator";
 
 const DEFAULT_COORDINATOR_PORT = 3747;
 const DEFAULT_DASHBOARD_PORT = 3748;
 const DEFAULT_ROCKETRIDE_URI = "http://127.0.0.1:5565";
-const REBASE_AGENTS_BLOCK = [
-  "<!-- BEGIN REBASE -->",
-  "## Rebase coordination",
+const TEMPO_AGENTS_BLOCK = [
+  "<!-- BEGIN TEMPO -->",
+  "## Tempo coordination",
   "",
-  "This repo uses Rebase to coordinate parallel AI coding sessions.",
+  "This repo uses Tempo to coordinate parallel AI coding sessions.",
   "",
   "When working in this repo, Codex must:",
   "",
-  "- rely on Rebase hooks for automatic session/activity evidence",
-  "- call `rebase_join` only if hooks are unavailable or Rebase does not recognize the session",
-  "- call `rebase_plan` before meaningful edits when the plan matters for coordination",
-  "- call `rebase_checkpoint` after meaningful edit batches",
-  "- call `rebase_checkpoint` before committing",
-  "- report Rebase notifications to the user",
-  "- treat Rebase `workOrders` as the delegated task source of truth for this session",
-  "- pause only on blocking Rebase risk until the user gives direction",
-  "- if `rebase_wait_for_direction` times out with `keepWaiting: true`, call it again instead of ending the session cold",
-  "- if `rebase_wait_for_direction` returns `workOrders`, acknowledge the assigned role in the chat and follow that work order before continuing",
-  "- when Rebase returns `directions`, present the role and plan to the user, call `rebase_acknowledge_intervention`, then continue from that direction",
-  "- if the user chooses split ownership in this chat, call `rebase_record_decision`; this session becomes the owner unless the user names a different owner",
-  "- if Rebase MCP tools return `unsupported call`, use the token-auth shell fallback, for example `rebase mcp checkpoint --json '{\"sessionId\":\"...\"}'` or `rebase mcp wait-for-direction --json '{\"sessionId\":\"...\",\"timeoutMs\":3000}'`",
+  "- rely on Tempo hooks for automatic session/activity evidence",
+  "- call `tempo_join` only if hooks are unavailable or Tempo does not recognize the session",
+  "- call `tempo_plan` before meaningful edits when the plan matters for coordination",
+  "- call `tempo_checkpoint` after meaningful edit batches",
+  "- call `tempo_checkpoint` before committing",
+  "- report Tempo notifications to the user",
+  "- treat Tempo `workOrders` as the delegated task source of truth for this session",
+  "- pause only on blocking Tempo risk until the user gives direction",
+  "- if `tempo_wait_for_direction` times out with `keepWaiting: true`, call it again instead of ending the session cold",
+  "- When Tempo returns `choices`, show the numbered options and keep polling with `tempo_wait_for_direction` until the user records a choice or another session sends a direction",
+  "- If another session records the decision, receive the resulting `directions` or `workOrders`, acknowledge them, and continue automatically from that Tempo plan",
+  "- if `tempo_wait_for_direction` returns `workOrders`, acknowledge the assigned role in the chat and follow that work order before continuing",
+  "- when Tempo returns `directions`, present the role and plan to the user, call `tempo_acknowledge_intervention`, then continue from that direction",
+  "- if the user chooses split ownership in this chat, call `tempo_record_decision`; this session becomes the owner unless the user names a different owner",
+  "- if Tempo MCP tools return `unsupported call`, use the token-auth shell fallback, for example `tempo mcp checkpoint --json '{\"sessionId\":\"...\"}'` or `tempo mcp wait-for-direction --json '{\"sessionId\":\"...\",\"timeoutMs\":3000}'`",
   "- do not add external context providers without an ADR and explicit Krish approval",
   "",
-  "<!-- END REBASE -->",
+  "<!-- END TEMPO -->",
   ""
 ].join("\n");
 
 export interface RuntimePrompts {
   updateGitignore: boolean;
   updateAgents: boolean;
-  updateRebaseIgnore?: boolean;
+  updateTempoIgnore?: boolean;
 }
 
 export interface PrepareRuntimeInput {
@@ -47,7 +49,7 @@ export interface PrepareRuntimeInput {
   dashboardPort?: number;
 }
 
-export interface RebaseRuntime {
+export interface TempoRuntime {
   repoRoot: string;
   dataDir: string;
   dbPath: string;
@@ -64,21 +66,21 @@ export interface RebaseRuntime {
 
 export async function prepareRuntime(
   input: PrepareRuntimeInput
-): Promise<RebaseRuntime> {
+): Promise<TempoRuntime> {
   const repoRoot = await findGitRoot(input.cwd);
-  const dataDir = path.join(repoRoot, ".rebase");
+  const dataDir = path.join(repoRoot, ".tempo");
   await mkdir(dataDir, { recursive: true });
-  await ensureRebaseDataGitignore(dataDir);
+  await ensureTempoDataGitignore(dataDir);
   const hookPath = path.join(dataDir, "hooks", "codex-hook.mjs");
 
   const coordinatorPort = input.coordinatorPort ?? DEFAULT_COORDINATOR_PORT;
   const dashboardPort = input.dashboardPort ?? DEFAULT_DASHBOARD_PORT;
   const runtimePath = path.join(dataDir, "runtime.json");
   const existing = await readRuntime(runtimePath);
-  const runtime: RebaseRuntime = {
+  const runtime: TempoRuntime = {
     repoRoot,
     dataDir,
-    dbPath: path.join(dataDir, "rebase.sqlite"),
+    dbPath: path.join(dataDir, "tempo.sqlite"),
     envPath: path.join(dataDir, ".env"),
     hookPath,
     token: existing?.token ?? nanoid(32),
@@ -97,19 +99,19 @@ export async function prepareRuntime(
   await ensureCodexHookScript(hookPath);
 
   if (input.prompts.updateGitignore) {
-    await ensureLine(path.join(repoRoot, ".gitignore"), ".rebase/");
+    await ensureLine(path.join(repoRoot, ".gitignore"), ".tempo/");
   }
   if (input.prompts.updateAgents) {
-    await ensureRebaseAgentsBlock(path.join(repoRoot, "AGENTS.md"));
+    await ensureTempoAgentsBlock(path.join(repoRoot, "AGENTS.md"));
   }
-  if (input.prompts.updateRebaseIgnore) {
-    await ensureLine(path.join(repoRoot, ".rebaseignore"), "# Rebase privacy ignore");
+  if (input.prompts.updateTempoIgnore) {
+    await ensureLine(path.join(repoRoot, ".tempoignore"), "# Tempo privacy ignore");
   }
 
   return runtime;
 }
 
-export async function readRuntimeState(cwd: string): Promise<RebaseRuntime | null> {
+export async function readRuntimeState(cwd: string): Promise<TempoRuntime | null> {
   const checkoutRoot = await findGitRoot(cwd);
   const lookup = await findRuntimeLookup(checkoutRoot);
   const existing = lookup.existing;
@@ -120,7 +122,7 @@ export async function readRuntimeState(cwd: string): Promise<RebaseRuntime | nul
   return {
     repoRoot: existing.repoRoot ?? lookup.repoRoot,
     dataDir,
-    dbPath: existing.dbPath ?? path.join(dataDir, "rebase.sqlite"),
+    dbPath: existing.dbPath ?? path.join(dataDir, "tempo.sqlite"),
     envPath: existing.envPath ?? path.join(dataDir, ".env"),
     hookPath: existing.hookPath ?? path.join(dataDir, "hooks", "codex-hook.mjs"),
     token: existing.token,
@@ -140,7 +142,7 @@ export async function readRuntimeState(cwd: string): Promise<RebaseRuntime | nul
 async function findRuntimeLookup(repoRoot: string): Promise<{
   repoRoot: string;
   dataDir: string;
-  existing: Partial<RebaseRuntime> | null;
+  existing: Partial<TempoRuntime> | null;
 }> {
   const primary = await readRuntimeAt(repoRoot);
   if (primary.existing?.token) return primary;
@@ -157,9 +159,9 @@ async function findRuntimeLookup(repoRoot: string): Promise<{
 async function readRuntimeAt(repoRoot: string): Promise<{
   repoRoot: string;
   dataDir: string;
-  existing: Partial<RebaseRuntime> | null;
+  existing: Partial<TempoRuntime> | null;
 }> {
-  const dataDir = path.join(repoRoot, ".rebase");
+  const dataDir = path.join(repoRoot, ".tempo");
   return {
     repoRoot,
     dataDir,
@@ -300,7 +302,7 @@ async function checkRocketRideWithSdk(input: {
       uri: input.uri,
       auth: input.apiKey,
       requestTimeout: 1500,
-      module: "rebase-cli"
+      module: "tempo-cli"
     });
   try {
     await client.connect({
@@ -331,21 +333,21 @@ function normalizeRocketRideUri(uri: string): string {
   return uri.replace(/\/+$/, "") || DEFAULT_ROCKETRIDE_URI;
 }
 
-async function readRuntime(runtimePath: string): Promise<Partial<RebaseRuntime> | null> {
+async function readRuntime(runtimePath: string): Promise<Partial<TempoRuntime> | null> {
   try {
-    return JSON.parse(await readFile(runtimePath, "utf8")) as Partial<RebaseRuntime>;
+    return JSON.parse(await readFile(runtimePath, "utf8")) as Partial<TempoRuntime>;
   } catch (_error) {
     return null;
   }
 }
 
-export async function loadRebaseEnv(
+export async function loadTempoEnv(
   envPath: string,
   target: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): Promise<void> {
   const current = await readOptional(envPath);
   if (!current) return;
-  const parsed = parseRebaseEnv(current);
+  const parsed = parseTempoEnv(current);
   for (const [key, value] of Object.entries(parsed)) {
     if (target[key] === undefined) {
       target[key] = value;
@@ -353,7 +355,7 @@ export async function loadRebaseEnv(
   }
 }
 
-export function parseRebaseEnv(source: string): Record<string, string> {
+export function parseTempoEnv(source: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const rawLine of source.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -377,7 +379,7 @@ function unquoteEnvValue(value: string): string {
   return value.replace(/\s+#.*$/, "");
 }
 
-async function ensureRebaseDataGitignore(dataDir: string): Promise<void> {
+async function ensureTempoDataGitignore(dataDir: string): Promise<void> {
   const filePath = path.join(dataDir, ".gitignore");
   const current = await readOptional(filePath);
   if (current.trim()) return;
@@ -420,23 +422,23 @@ async function ensureLine(filePath: string, line: string): Promise<void> {
   await writeFile(filePath, `${next}\n`);
 }
 
-async function ensureRebaseAgentsBlock(filePath: string): Promise<void> {
+async function ensureTempoAgentsBlock(filePath: string): Promise<void> {
   const current = await readOptional(filePath);
-  const begin = "<!-- BEGIN REBASE -->";
-  const end = "<!-- END REBASE -->";
+  const begin = "<!-- BEGIN TEMPO -->";
+  const end = "<!-- END TEMPO -->";
   const beginIndex = current.indexOf(begin);
   const endIndex = current.indexOf(end);
   if (beginIndex !== -1 && endIndex !== -1 && endIndex > beginIndex) {
     const before = current.slice(0, beginIndex).trimEnd();
     const after = current.slice(endIndex + end.length).trimStart();
-    const next = [before, REBASE_AGENTS_BLOCK.trimEnd(), after]
+    const next = [before, TEMPO_AGENTS_BLOCK.trimEnd(), after]
       .filter(Boolean)
       .join("\n\n");
     await writeFile(filePath, `${next}\n`);
     return;
   }
   const separator = current.trim().length > 0 ? "\n\n" : "";
-  await writeFile(filePath, `${current.trimEnd()}${separator}${REBASE_AGENTS_BLOCK}`);
+  await writeFile(filePath, `${current.trimEnd()}${separator}${TEMPO_AGENTS_BLOCK}`);
 }
 
 async function readOptional(filePath: string): Promise<string> {

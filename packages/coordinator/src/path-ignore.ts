@@ -3,7 +3,7 @@ import path from "node:path";
 
 const DEFAULT_IGNORED_SEGMENTS = new Set([
   ".git",
-  ".rebase",
+  ".tempo",
   "node_modules",
   ".next",
   "dist",
@@ -27,13 +27,13 @@ const DEFAULT_IGNORED_BASENAME_PATTERNS = [
   "pnpm-debug.log*"
 ];
 
-export interface RebasePathFilter {
+export interface TempoPathFilter {
   isIgnoredPath(filePath: string): boolean;
   filterDiff(diff: string): string;
 }
 
-export function createRebasePathFilter(repoRoot: string): RebasePathFilter {
-  const rules = readRebaseIgnoreRules(repoRoot);
+export function createTempoPathFilter(repoRoot: string): TempoPathFilter {
+  const rules = readTempoIgnoreRules(repoRoot);
   return {
     isIgnoredPath(filePath: string) {
       const relativePath = toRelativePath(repoRoot, filePath);
@@ -48,8 +48,8 @@ export function createRebasePathFilter(repoRoot: string): RebasePathFilter {
   };
 }
 
-function readRebaseIgnoreRules(repoRoot: string): string[] {
-  const ignorePath = path.join(repoRoot, ".rebaseignore");
+function readTempoIgnoreRules(repoRoot: string): string[] {
+  const ignorePath = path.join(repoRoot, ".tempoignore");
   try {
     return fs
       .readFileSync(ignorePath, "utf8")
@@ -137,7 +137,7 @@ function filePathFromDiffBlock(block: string): string | null {
 }
 
 function globMatch(value: string, pattern: string): boolean {
-  const doubleStarPlaceholder = "__REBASE_DOUBLE_STAR__";
+  const doubleStarPlaceholder = "__TEMPO_DOUBLE_STAR__";
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*\*/g, doubleStarPlaceholder)

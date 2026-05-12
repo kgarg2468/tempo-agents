@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "tempo-fingerprint",
+  "description": "Required Tempo pipeline. Produces a typed { fingerprint } payload for a dirty worktree.",
+  "x-tempo": {
+    "contract": "fingerprintRunOutput",
+    "intent": "Build merge-aware fingerprints from a worktree diff, hook evidence, and repo graph facts."
+  },
+  "source": "source_1",
+  "components": [
+    {
+      "id": "source_1",
+      "provider": "webhook",
+      "config": {
+        "key": "webhook://*",
+        "mode": "Source",
+        "name": "Tempo Fingerprint Input",
+        "include": [{ "path": "*" }],
+        "parameters": {
+          "endpoint": "/pipe/process",
+          "port": 5565
+        },
+        "sync": false,
+        "type": "webhook"
+      },
+      "ui": {}
+    },
+    {
+      "id": "tempo_1",
+      "provider": "tempo_coordination",
+      "config": {
+        "operation": "fingerprint"
+      },
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "source_1" }
+      ]
+    },
+    {
+      "id": "response_1",
+      "provider": "response",
+      "config": {},
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "tempo_1" }
+      ]
+    }
+  ]
+}

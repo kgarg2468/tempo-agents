@@ -1,4 +1,4 @@
-import type { ContractSurface, SurfaceKind } from "@rebase/shared";
+import type { ContractSurface, SurfaceKind } from "@tempo/shared";
 
 export interface FileSnapshot {
   path: string;

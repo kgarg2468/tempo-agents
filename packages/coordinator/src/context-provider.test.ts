@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DisabledExternalContextProvider,
-  NativeRebaseContextProvider
+  NativeTempoContextProvider
 } from "./context-provider.js";
-import { createRebaseStore } from "./store.js";
+import { createTempoStore } from "./store.js";
 
 describe("context providers", () => {
-  it("serves native Rebase code and decision facts without external providers", async () => {
-    const store = createRebaseStore(":memory:");
+  it("serves native Tempo code and decision facts without external providers", async () => {
+    const store = createTempoStore(":memory:");
     store.upsertFingerprint({
       id: "fp-1",
       repoId: "repo-1",
@@ -61,7 +61,7 @@ describe("context providers", () => {
       updatedAt: 1778000000002
     });
 
-    const result = await new NativeRebaseContextProvider(store).query({
+    const result = await new NativeTempoContextProvider(store).query({
       repoId: "repo-1",
       worktreeId: "wt-a",
       surfaces: ["Task model"]

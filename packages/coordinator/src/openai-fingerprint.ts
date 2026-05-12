@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
-import type { Fingerprint } from "@rebase/shared";
-import { fingerprintSchema } from "@rebase/shared";
+import type { Fingerprint } from "@tempo/shared";
+import { fingerprintSchema } from "@tempo/shared";
 import {
   createHeuristicFingerprint,
   type HeuristicFingerprintInput

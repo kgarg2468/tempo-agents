@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "tempo-work-order",
+  "description": "Required Tempo pipeline. Produces typed { episodes, workOrders } owner/adapter assignments.",
+  "x-tempo": {
+    "contract": "workOrderRunOutput",
+    "intent": "Create per-agent owner/adapter work orders for every affected Codex session in a coordination episode."
+  },
+  "source": "source_1",
+  "components": [
+    {
+      "id": "source_1",
+      "provider": "webhook",
+      "config": {
+        "key": "webhook://*",
+        "mode": "Source",
+        "name": "Tempo Work Order Input",
+        "include": [{ "path": "*" }],
+        "parameters": {
+          "endpoint": "/pipe/process",
+          "port": 5565
+        },
+        "sync": false,
+        "type": "webhook"
+      },
+      "ui": {}
+    },
+    {
+      "id": "tempo_1",
+      "provider": "tempo_coordination",
+      "config": {
+        "operation": "work-order"
+      },
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "source_1" }
+      ]
+    },
+    {
+      "id": "response_1",
+      "provider": "response",
+      "config": {},
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "tempo_1" }
+      ]
+    }
+  ]
+}

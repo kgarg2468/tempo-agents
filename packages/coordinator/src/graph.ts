@@ -1,15 +1,15 @@
 import type {
   AgentSession,
   Fingerprint,
-  RebaseConflict,
-  RebaseRepo,
-  RebaseWorktree
-} from "@rebase/shared";
-import type { RebaseStore } from "./store.js";
+  TempoConflict,
+  TempoRepo,
+  TempoWorktree
+} from "@tempo/shared";
+import type { TempoStore } from "./store.js";
 
 export function upsertRepoGraph(
-  store: RebaseStore,
-  repo: RebaseRepo,
+  store: TempoStore,
+  repo: TempoRepo,
   updatedAt: number
 ): void {
   store.upsertGraphNode({
@@ -26,8 +26,8 @@ export function upsertRepoGraph(
 }
 
 export function upsertWorktreeGraph(
-  store: RebaseStore,
-  worktree: RebaseWorktree
+  store: TempoStore,
+  worktree: TempoWorktree
 ): void {
   store.upsertGraphNode({
     id: `worktree:${worktree.id}`,
@@ -58,7 +58,7 @@ export function upsertWorktreeGraph(
 }
 
 export function upsertAgentGraph(
-  store: RebaseStore,
+  store: TempoStore,
   session: AgentSession,
   updatedAt: number
 ): void {
@@ -88,7 +88,7 @@ export function upsertAgentGraph(
 }
 
 export function upsertFingerprintGraph(
-  store: RebaseStore,
+  store: TempoStore,
   fingerprint: Fingerprint
 ): void {
   for (const file of fingerprint.filesTouched) {
@@ -155,8 +155,8 @@ export function upsertFingerprintGraph(
 }
 
 export function upsertConflictGraph(
-  store: RebaseStore,
-  conflict: RebaseConflict
+  store: TempoStore,
+  conflict: TempoConflict
 ): void {
   const conflictNodeId = `conflict:${conflict.id}`;
   store.upsertGraphNode({

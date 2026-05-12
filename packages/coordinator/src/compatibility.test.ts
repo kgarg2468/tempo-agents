@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Fingerprint } from "@rebase/shared";
+import type { Fingerprint } from "@tempo/shared";
 import { createCompatibilityClassification } from "./compatibility.js";
 
 describe("compatibility classifier", () => {

@@ -1,10 +1,10 @@
-import type { CloudEscalationPacket, Fingerprint, RebaseConflict } from "@rebase/shared";
+import type { CloudEscalationPacket, Fingerprint, TempoConflict } from "@tempo/shared";
 import { stableId } from "./ids.js";
 import { redactForCloud } from "./privacy.js";
 
 export function createCloudEscalationCandidate(input: {
   repoRoot: string;
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   fingerprints: Fingerprint[];
   evidencePacketIds?: string[] | undefined;
   provider?: string | undefined;
@@ -51,7 +51,7 @@ export function createCloudEscalationCandidate(input: {
     conflictId: input.conflict.id,
     evidencePacketIds: input.evidencePacketIds ?? [],
     provider: input.provider ?? "openai",
-    reason: `${input.conflict.risk} Rebase collision candidate on ${input.conflict.primarySurface}`,
+    reason: `${input.conflict.risk} Tempo collision candidate on ${input.conflict.primarySurface}`,
     status: "candidate",
     redactions: redacted.redactions,
     redactedContext: redacted.value as Record<string, unknown>,

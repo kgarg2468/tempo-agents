@@ -1,5 +1,5 @@
-import type { RebaseConflict } from "@rebase/shared";
-import type { RebaseStore } from "./store.js";
+import type { TempoConflict } from "@tempo/shared";
+import type { TempoStore } from "./store.js";
 
 export interface ContextProviderQuery {
   repoId: string;
@@ -9,7 +9,7 @@ export interface ContextProviderQuery {
   limit?: number | undefined;
 }
 
-export interface RebaseContextFact {
+export interface TempoContextFact {
   id: string;
   kind: "surface" | "conflict" | "decision";
   label: string;
@@ -20,7 +20,7 @@ export interface RebaseContextFact {
 export interface ContextProviderResult {
   provider: string;
   enabled: boolean;
-  facts: RebaseContextFact[];
+  facts: TempoContextFact[];
   warnings: string[];
 }
 
@@ -30,11 +30,11 @@ export interface ContextProvider {
   query(input: ContextProviderQuery): Promise<ContextProviderResult>;
 }
 
-export class NativeRebaseContextProvider implements ContextProvider {
-  readonly name = "native-rebase";
+export class NativeTempoContextProvider implements ContextProvider {
+  readonly name = "native-tempo";
   readonly enabled = true;
 
-  constructor(private readonly store: RebaseStore) {}
+  constructor(private readonly store: TempoStore) {}
 
   async query(input: ContextProviderQuery): Promise<ContextProviderResult> {
     const facts = [
@@ -50,7 +50,7 @@ export class NativeRebaseContextProvider implements ContextProvider {
     };
   }
 
-  private surfaceFacts(input: ContextProviderQuery): RebaseContextFact[] {
+  private surfaceFacts(input: ContextProviderQuery): TempoContextFact[] {
     const files = new Set(input.files ?? []);
     const surfaces = new Set(input.surfaces ?? []);
     return this.store
@@ -75,7 +75,7 @@ export class NativeRebaseContextProvider implements ContextProvider {
       }));
   }
 
-  private conflictFacts(input: ContextProviderQuery): RebaseContextFact[] {
+  private conflictFacts(input: ContextProviderQuery): TempoContextFact[] {
     return this.store
       .listConflicts(input.repoId)
       .filter((conflict) => matchesConflict(input, conflict))
@@ -88,7 +88,7 @@ export class NativeRebaseContextProvider implements ContextProvider {
       }));
   }
 
-  private decisionFacts(input: ContextProviderQuery): RebaseContextFact[] {
+  private decisionFacts(input: ContextProviderQuery): TempoContextFact[] {
     const matchingConflictIds = new Set(
       this.store
         .listConflicts(input.repoId)
@@ -122,7 +122,7 @@ export class DisabledExternalContextProvider implements ContextProvider {
       enabled: false,
       facts: [],
       warnings: [
-        "External context providers are disabled in Rebase V1 unless an ADR and Krish approval explicitly enable one."
+        "External context providers are disabled in Tempo V1 unless an ADR and Krish approval explicitly enable one."
       ]
     };
   }
@@ -130,7 +130,7 @@ export class DisabledExternalContextProvider implements ContextProvider {
 
 function matchesConflict(
   input: ContextProviderQuery,
-  conflict: RebaseConflict
+  conflict: TempoConflict
 ): boolean {
   const surfaces = new Set(input.surfaces ?? []);
   if (input.worktreeId && !conflict.affectedWorktreeIds.includes(input.worktreeId)) {

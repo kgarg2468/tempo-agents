@@ -1,10 +1,10 @@
 {
-  "name": "rebase-ai",
+  "name": "tempo-ai",
   "version": "0.1.0",
   "type": "module",
   "private": true,
   "bin": {
-    "rebase": "./dist/index.js"
+    "tempo": "./dist/index.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,7 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@rebase/coordinator": "workspace:*",
+    "@tempo/coordinator": "workspace:*",
     "execa": "^9.6.1",
     "nanoid": "^5.1.6",
     "rocketride": "^1.0.6"

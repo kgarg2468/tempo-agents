@@ -8,10 +8,13 @@ import type {
   Intervention,
   MergeRiskAssessment,
   RiskLevel,
-  RebaseConflict,
+  TempoConflict,
   WorkOrder
-} from "@rebase/shared";
+} from "@tempo/shared";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { nanoid } from "nanoid";
 import { createHeuristicAdvisory } from "./advisory.js";
 import { buildCoordinationEpisodes } from "./episodes.js";
@@ -22,12 +25,12 @@ import {
 import { upsertAgentGraph } from "./graph.js";
 import { worktreeIdFor } from "./ids.js";
 import { isRocketRideRequired, type RocketRideCoordinator } from "./rocketride.js";
-import type { RebaseStore } from "./store.js";
+import type { TempoStore } from "./store.js";
 
 export interface McpToolContext {
   repoId: string;
   repoRoot: string;
-  store: RebaseStore;
+  store: TempoStore;
   rocketRide?: RocketRideCoordinator | undefined;
 }
 
@@ -85,7 +88,7 @@ export interface ActiveDecisionBrief {
 export interface CheckpointResult {
   risk: RiskLevel;
   notifications: string[];
-  notices: RebaseConflict[];
+  notices: TempoConflict[];
   choices: ConflictChoiceBrief[];
   directions: Intervention[];
   workOrders: WorkOrder[];
@@ -108,7 +111,7 @@ export interface SessionStateInput {
 export interface SessionStateResult {
   session: AgentSession | null;
   evidencePacketId?: string | undefined;
-  activeRisks: RebaseConflict[];
+  activeRisks: TempoConflict[];
   queuedDirections: Intervention[];
   queuedWorkOrders: WorkOrder[];
   coordinationEpisodes: CoordinationEpisode[];
@@ -121,7 +124,7 @@ export interface CollisionRiskInput {
 
 export interface CollisionRiskResult {
   risk: RiskLevel;
-  conflicts: RebaseConflict[];
+  conflicts: TempoConflict[];
   cloudEscalationPacketIds: string[];
 }
 
@@ -176,6 +179,7 @@ export interface AcknowledgeInterventionInput {
 
 const MAX_WAIT_HEARTBEAT_MS = 110_000;
 const WAIT_POLL_MS = 50;
+const MAX_SNAPSHOT_BYTES = 200_000;
 
 export function createMcpToolHandlers(context: McpToolContext) {
   return {
@@ -199,14 +203,14 @@ export function createMcpToolHandlers(context: McpToolContext) {
         id: nanoid(16),
         repoId: context.repoId,
         type: "agent.joined",
-        message: `${session.displayName} joined Rebase`,
+        message: `${session.displayName} joined Tempo`,
         payload: { cwd: input.cwd, worktreeId },
         createdAt: now
       });
       return {
         sessionId: session.id,
         worktreeId,
-        message: `Rebase is tracking this worktree as ${session.displayName}.`
+        message: `Tempo is tracking this worktree as ${session.displayName}.`
       };
     },
 
@@ -214,7 +218,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
       context.store.updateAgentPlan(input.sessionId, input.plan, Date.now());
       return {
         ok: true,
-        message: "Rebase recorded this plan. Checkpoint after meaningful edit batches."
+        message: "Tempo recorded this plan. Checkpoint after meaningful edit batches."
       };
     },
 
@@ -226,7 +230,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
       if (!session) {
         return {
           risk: "low",
-          notifications: ["Rebase does not recognize this session. Call rebase_join."],
+          notifications: ["Tempo does not recognize this session. Call tempo_join."],
           notices: [],
           choices: [],
           directions: [],
@@ -356,21 +360,21 @@ export function createMcpToolHandlers(context: McpToolContext) {
       }
       if (directions.length > 0) {
         notifications.push(
-          `Rebase delivered ${directions.length} queued direction${
+          `Tempo delivered ${directions.length} queued direction${
             directions.length === 1 ? "" : "s"
           } for this session.`
         );
       }
       if (workOrders.length > 0) {
         notifications.push(
-          `Rebase delivered ${workOrders.length} work order${
+          `Tempo delivered ${workOrders.length} work order${
             workOrders.length === 1 ? "" : "s"
           } for this session.`
         );
       }
       for (const decision of activeDecisions) {
         notifications.push(
-          `Rebase decision active: ${decision.selectedOptionTitle} for conflict ${decision.conflictId}.`
+          `Tempo decision active: ${decision.selectedOptionTitle} for conflict ${decision.conflictId}.`
         );
       }
 
@@ -658,13 +662,13 @@ export function createMcpToolHandlers(context: McpToolContext) {
         return { ok: false, message: "Intervention not found for this session." };
       }
       context.store.markInterventionAcknowledged(input.interventionId, Date.now());
-      return { ok: true, message: "Rebase marked the direction as acknowledged." };
+      return { ok: true, message: "Tempo marked the direction as acknowledged." };
     }
   };
 }
 
 function activateEpisodeWorkOrdersForDecision(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   episode: CoordinationEpisode | undefined;
   decision: ConflictDecision;
@@ -696,7 +700,7 @@ function activateEpisodeWorkOrdersForDecision(input: {
 }
 
 function deliverQueuedDirections(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string
 ): Intervention[] {
@@ -709,7 +713,7 @@ function deliverQueuedDirections(
 }
 
 function deliverQueuedWorkOrders(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string,
   options: { includeActive?: boolean } = {}
@@ -731,7 +735,7 @@ function deliverQueuedWorkOrders(
 }
 
 function syncCoordinationState(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   createdAt: number,
   rocketRide?: RocketRideCoordinator | undefined
@@ -773,7 +777,7 @@ function syncCoordinationState(
 }
 
 function relevantCoordinationEpisodesForSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string
 ): CoordinationEpisode[] {
@@ -787,7 +791,7 @@ function relevantCoordinationEpisodesForSession(
 }
 
 function mergeRisksForEpisodes(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   episodes: CoordinationEpisode[]
 ): MergeRiskAssessment[] {
@@ -806,7 +810,7 @@ function isBlockingMergeRisk(assessment: MergeRiskAssessment): boolean {
 }
 
 function ensureQueuedDirectionsForSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string
 ): void {
@@ -928,10 +932,10 @@ function hasScopedInterventionForSession(
 }
 
 function conflictsForSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   session: AgentSession
-): RebaseConflict[] {
+): TempoConflict[] {
   if (!session.worktreeId) return [];
   return store
     .listConflicts(repoId)
@@ -944,7 +948,7 @@ function conflictsForSession(
 }
 
 function choicesForSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string
 ): ConflictChoiceBrief[] {
@@ -962,7 +966,7 @@ function choicesForSession(
   );
 }
 
-function choicesForConflicts(conflicts: RebaseConflict[]): ConflictChoiceBrief[] {
+function choicesForConflicts(conflicts: TempoConflict[]): ConflictChoiceBrief[] {
   return conflicts.map((conflict) => ({
     conflictId: conflict.id,
     title: conflict.title,
@@ -977,7 +981,7 @@ function choicesForConflicts(conflicts: RebaseConflict[]): ConflictChoiceBrief[]
   }));
 }
 
-function isBlockingConflict(conflict: RebaseConflict): boolean {
+function isBlockingConflict(conflict: TempoConflict): boolean {
   return (
     conflict.debate?.verdict === "blocking" ||
     conflict.classification?.kind === "blocking_conflict" ||
@@ -1001,7 +1005,7 @@ interface WorkOrderEvaluation {
 }
 
 function evaluateWorkOrdersForCheckpoint(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
   workOrders: WorkOrder[];
@@ -1017,7 +1021,8 @@ function evaluateWorkOrdersForCheckpoint(input: {
       return !(
         episode &&
         isIntegrationEpisode(input.store, input.repoId, episode) &&
-        workOrder.role !== "integration_owner"
+        workOrder.role !== "integration_owner" &&
+        !hasConcreteCheckpointEnforcement(workOrder)
       );
     })
     .map((workOrder) => {
@@ -1038,8 +1043,16 @@ function evaluateWorkOrdersForCheckpoint(input: {
     });
 }
 
+function hasConcreteCheckpointEnforcement(workOrder: WorkOrder): boolean {
+  return (
+    workOrder.blockedFiles.length > 0 ||
+    (workOrder.requiredFeatureTerms ?? []).length > 0 ||
+    Boolean(workOrder.requiredSnapshotPublicationId)
+  );
+}
+
 function isIntegrationEpisode(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   episode: CoordinationEpisode
 ): boolean {
@@ -1050,7 +1063,7 @@ function isIntegrationEpisode(
 }
 
 function evaluateWorkOrder(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
   workOrder: WorkOrder;
@@ -1067,6 +1080,20 @@ function evaluateWorkOrder(input: {
       workOrder: input.workOrder,
       satisfied: false,
       missingTerms: [`blocked files touched: ${blockedFiles.join(", ")}`]
+    };
+  }
+
+  const snapshotViolations = snapshotFileViolations({
+    store: input.store,
+    repoId: input.repoId,
+    session: input.session,
+    workOrder: input.workOrder
+  });
+  if (snapshotViolations.length > 0) {
+    return {
+      workOrder: input.workOrder,
+      satisfied: false,
+      missingTerms: snapshotViolations
     };
   }
 
@@ -1105,7 +1132,11 @@ function evaluateWorkOrder(input: {
   const requiredTerms = ENFORCED_CONTRACT_TERMS.filter((term) =>
     input.workOrder.requiredContract?.includes(term)
   );
-  if (requiredTerms.length === 0) {
+  const featureTerms = (input.workOrder.requiredFeatureTerms ?? []).filter((term) =>
+    ENFORCED_CONTRACT_TERMS.includes(term)
+  );
+  const allRequiredTerms = uniqueInOrder([...requiredTerms, ...featureTerms]);
+  if (allRequiredTerms.length === 0) {
     return { workOrder: input.workOrder, satisfied: true, missingTerms: [] };
   }
 
@@ -1114,7 +1145,7 @@ function evaluateWorkOrder(input: {
     repoId: input.repoId,
     session: input.session
   });
-  const missingTerms = requiredTerms.filter((term) => !evidence.includes(term));
+  const missingTerms = allRequiredTerms.filter((term) => !evidence.includes(term));
   return {
     workOrder: input.workOrder,
     satisfied: missingTerms.length === 0,
@@ -1122,8 +1153,48 @@ function evaluateWorkOrder(input: {
   };
 }
 
+function snapshotFileViolations(input: {
+  store: TempoStore;
+  repoId: string;
+  session: AgentSession;
+  workOrder: WorkOrder;
+}): string[] {
+  if (!input.workOrder.requiredSnapshotPublicationId) return [];
+  const publication = input.store
+    .listContractPublications(input.repoId)
+    .find(
+      (candidate) =>
+        candidate.id === input.workOrder.requiredSnapshotPublicationId
+    );
+  if (!publication) {
+    return [
+      `snapshot publication missing: ${input.workOrder.requiredSnapshotPublicationId}`
+    ];
+  }
+  const publicationSnapshots = publication.fileSnapshots ?? [];
+  if (publicationSnapshots.length === 0) {
+    return [`snapshot publication has no files: ${publication.id}`];
+  }
+  const snapshotFiles =
+    input.workOrder.sharedFiles.length > 0
+      ? publicationSnapshots.filter((snapshot) =>
+          input.workOrder.sharedFiles.some((pattern) =>
+            pathPatternMatches(pattern, snapshot.path)
+          )
+        )
+      : publicationSnapshots;
+  return snapshotFiles.flatMap((snapshot) => {
+    const current = readSnapshotHash(input.session.cwd, snapshot.path);
+    if (!current) return [`snapshot missing: ${snapshot.path}`];
+    if (current !== snapshot.sha256) {
+      return [`snapshot mismatch: ${snapshot.path}`];
+    }
+    return [];
+  });
+}
+
 function hasOwnerPublicationForEpisode(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   sessionId: string;
   episode: CoordinationEpisode;
@@ -1139,7 +1210,7 @@ function hasOwnerPublicationForEpisode(input: {
 }
 
 function latestFingerprintEvidence(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
 }): string {
@@ -1162,7 +1233,7 @@ function latestFingerprintEvidence(input: {
 }
 
 function blockedFileViolations(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
   workOrder: WorkOrder;
@@ -1175,7 +1246,7 @@ function blockedFileViolations(input: {
 }
 
 function touchedFilesForSession(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
 }): string[] {
@@ -1218,6 +1289,66 @@ function gitChangedFiles(cwd: string): string[] {
   }
 }
 
+function captureFileSnapshots(input: {
+  cwd: string;
+  files: string[];
+  capturedAt: number;
+}): ContractPublication["fileSnapshots"] {
+  return uniqueInOrder(input.files)
+    .flatMap((file) => {
+      const relativePath = normalizeSnapshotPath(file);
+      if (!relativePath) return [];
+      const absolutePath = path.resolve(input.cwd, relativePath);
+      if (!isInsidePath(input.cwd, absolutePath)) return [];
+      if (!existsSync(absolutePath)) return [];
+      const stats = statSync(absolutePath);
+      if (!stats.isFile()) return [];
+      const buffer = readFileSync(absolutePath);
+      const snapshot = {
+        path: relativePath,
+        sha256: hashBuffer(buffer),
+        sizeBytes: buffer.byteLength,
+        capturedAt: input.capturedAt,
+        ...(buffer.byteLength <= MAX_SNAPSHOT_BYTES && !buffer.includes(0)
+          ? { content: buffer.toString("utf8") }
+          : {})
+      };
+      return [snapshot];
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function readSnapshotHash(cwd: string, file: string): string | null {
+  const relativePath = normalizeSnapshotPath(file);
+  if (!relativePath) return null;
+  const absolutePath = path.resolve(cwd, relativePath);
+  if (!isInsidePath(cwd, absolutePath)) return null;
+  if (!existsSync(absolutePath)) return null;
+  const stats = statSync(absolutePath);
+  if (!stats.isFile()) return null;
+  return hashBuffer(readFileSync(absolutePath));
+}
+
+function normalizeSnapshotPath(file: string): string | null {
+  const normalized = file.replace(/\\/g, "/").replace(/^\.\/+/, "");
+  if (!normalized || normalized.startsWith("/") || normalized.includes("\0")) {
+    return null;
+  }
+  const parts = normalized.split("/");
+  if (parts.includes("..") || parts.includes(".git")) return null;
+  return normalized;
+}
+
+function isInsidePath(root: string, candidate: string): boolean {
+  const resolvedRoot = path.resolve(root);
+  const relative = path.relative(resolvedRoot, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function hashBuffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
 function pathPatternMatches(pattern: string, file: string): boolean {
   if (pattern === file) return true;
   if (pattern.endsWith("/**")) {
@@ -1229,8 +1360,12 @@ function pathPatternMatches(pattern: string, file: string): boolean {
   return false;
 }
 
+function uniqueInOrder(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 function coordinationEpisodeForConflict(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   conflictId: string
 ): CoordinationEpisode | undefined {
@@ -1241,9 +1376,9 @@ function coordinationEpisodeForConflict(
 }
 
 function activeDecisionForConflictOrEpisode(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
-  conflict: RebaseConflict
+  conflict: TempoConflict
 ): ConflictDecision | null {
   const episode = coordinationEpisodeForConflict(store, repoId, conflict.id);
   const scopedConflictIds = new Set(episode?.conflictIds ?? [conflict.id]);
@@ -1261,7 +1396,7 @@ function activeDecisionForConflictOrEpisode(
 }
 
 function activeDecisionBriefsForSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string
 ): ActiveDecisionBrief[] {
@@ -1278,8 +1413,8 @@ function activeDecisionBriefsForSession(
 }
 
 function activeDecisionBriefsForConflicts(
-  store: RebaseStore,
-  conflicts: RebaseConflict[]
+  store: TempoStore,
+  conflicts: TempoConflict[]
 ): ActiveDecisionBrief[] {
   const seen = new Set<string>();
   return conflicts.flatMap((conflict) => {
@@ -1306,9 +1441,9 @@ function activeDecisionBriefsForConflicts(
 }
 
 function isIntegrationConflict(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
-  conflict: RebaseConflict
+  conflict: TempoConflict
 ): boolean {
   const affectedWorktrees = new Set(conflict.affectedWorktreeIds);
   return store
@@ -1338,9 +1473,9 @@ function queueDecisionInterventions({
   decision,
   createdAt
 }: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   episode?: CoordinationEpisode | undefined;
   decision: ConflictDecision;
   createdAt: number;
@@ -1386,7 +1521,7 @@ function buildDecisionIntervention({
   sentAt
 }: {
   repoId: string;
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   decision: ConflictDecision;
   agent: AgentSession;
   agents: AgentSession[];
@@ -1426,7 +1561,7 @@ function publishContractShape({
   input,
   createdAt
 }: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
   input: PublishContractInput;
@@ -1467,6 +1602,12 @@ function publishContractShape({
     surface: input.surface,
     shapeSummary: input.shapeSummary,
     files: input.files ?? [],
+    snapshotSetId: nanoid(16),
+    fileSnapshots: captureFileSnapshots({
+      cwd: session.cwd,
+      files: input.files ?? [],
+      capturedAt: createdAt
+    }),
     createdAt
   };
   store.upsertContractPublication(publication);
@@ -1495,11 +1636,11 @@ function publishContractShape({
 }
 
 function resolvePublicationConflict(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
   input: PublishContractInput;
-}): RebaseConflict | undefined {
+}): TempoConflict | undefined {
   if (input.input.conflictId) {
     return input.store
       .listConflicts(input.repoId)
@@ -1538,11 +1679,11 @@ function resolvePublicationConflict(input: {
 }
 
 function preferredPublicationConflict(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   sessionId: string;
-  conflicts: RebaseConflict[];
-}): RebaseConflict | undefined {
+  conflicts: TempoConflict[];
+}): TempoConflict | undefined {
   const ownedDecisionConflictIds = new Set(
     input.store
       .listConflictDecisions(input.repoId)
@@ -1561,7 +1702,7 @@ function preferredPublicationConflict(input: {
 }
 
 function publicationEpisodeForConflict(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   sessionId: string;
   conflictId: string;
@@ -1574,10 +1715,10 @@ function publicationEpisodeForConflict(input: {
 }
 
 function publicationConflictCandidates(input: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
   session: AgentSession;
-}): RebaseConflict[] {
+}): TempoConflict[] {
   const sessionEpisodes = relevantCoordinationEpisodesForSession(
     input.store,
     input.repoId,
@@ -1586,8 +1727,19 @@ function publicationConflictCandidates(input: {
     (episode) =>
       !episode.ownerAgentSessionId || episode.ownerAgentSessionId === input.session.id
   );
+  const ownerWorkOrderEpisodeIds = new Set(
+    input.store
+      .listActiveWorkOrders(input.repoId, input.session.id)
+      .filter((workOrder) => workOrder.role === "contract_owner")
+      .map((workOrder) => workOrder.episodeId)
+  );
+  const workOrderEpisodes = input.store
+    .listCoordinationEpisodes(input.repoId)
+    .filter((episode) => ownerWorkOrderEpisodeIds.has(episode.id));
   const activeConflictIds = new Set(
-    sessionEpisodes.flatMap((episode) => episode.conflictIds)
+    [...sessionEpisodes, ...workOrderEpisodes].flatMap(
+      (episode) => episode.conflictIds
+    )
   );
   return input.store
     .listConflicts(input.repoId)
@@ -1609,9 +1761,9 @@ function queuePublicationInterventions({
   ownerSessionId,
   createdAt
 }: {
-  store: RebaseStore;
+  store: TempoStore;
   repoId: string;
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   episode?: CoordinationEpisode | undefined;
   publication: ContractPublication;
   ownerSessionId: string;
@@ -1661,7 +1813,7 @@ function buildPublicationIntervention({
   sentAt
 }: {
   repoId: string;
-  conflict: RebaseConflict;
+  conflict: TempoConflict;
   publication: ContractPublication;
   agent: AgentSession;
   ownerSessionId: string;
@@ -1702,7 +1854,7 @@ function buildPublicationIntervention({
 }
 
 function waitingForOwnerPublication(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string
 ): WaitingOnBrief | null {
@@ -1738,7 +1890,7 @@ function waitingForOwnerPublication(
 }
 
 function relevantPublicationsForSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   sessionId: string
 ): ContractPublication[] {
@@ -1766,10 +1918,10 @@ function relevantPublicationsForSession(
 }
 
 function conflictsWithActiveDecisionsForSession(
-  store: RebaseStore,
+  store: TempoStore,
   repoId: string,
   session: AgentSession
-): RebaseConflict[] {
+): TempoConflict[] {
   if (!session.worktreeId) return [];
   const seenDecisionIds = new Set<string>();
   return store

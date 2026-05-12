@@ -44,7 +44,7 @@ importers:
 
   apps/dashboard:
     dependencies:
-      '@rebase/shared':
+      '@tempo/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@xyflow/react':
@@ -75,7 +75,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@rebase/coordinator':
+      '@tempo/coordinator':
         specifier: workspace:*
         version: link:../coordinator
       execa:
@@ -96,7 +96,7 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.24.0
         version: 1.29.0(zod@4.4.3)
-      '@rebase/shared':
+      '@tempo/shared':
         specifier: workspace:*
         version: link:../shared
       better-sqlite3:
@@ -127,10 +127,10 @@ importers:
 
   packages/evals:
     dependencies:
-      '@rebase/coordinator':
+      '@tempo/coordinator':
         specifier: workspace:*
         version: link:../coordinator
-      '@rebase/shared':
+      '@tempo/shared':
         specifier: workspace:*
         version: link:../shared
       zod:

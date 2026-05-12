@@ -1,4 +1,4 @@
-import type { AgentSession, RebaseConflict } from "@rebase/shared";
+import type { AgentSession, TempoConflict } from "@tempo/shared";
 import { describe, expect, it } from "vitest";
 import { buildCoordinationEpisodes } from "./episodes.js";
 import { stableId } from "./ids.js";
@@ -6,7 +6,7 @@ import { stableId } from "./ids.js";
 const now = 1778000000000;
 
 describe("coordination episodes", () => {
-  it("groups N pairwise conflicts on the same surface into one episode with one owner and many adapters", () => {
+  it("groups blocking conflicts without assigning an owner before a decision", () => {
     const agents = [
       makeAgent("agent-a", "wt-a", 1),
       makeAgent("agent-b", "wt-b", 2),
@@ -36,21 +36,9 @@ describe("coordination episodes", () => {
       affectedWorktreeIds: ["wt-a", "wt-b", "wt-c"],
       affectedAgentSessionIds: ["agent-a", "agent-b", "agent-c"],
       conflictIds: ["conflict-ab", "conflict-ac", "conflict-bc"],
-      ownerAgentSessionId: "agent-a"
     });
-    expect(plan.workOrders).toHaveLength(3);
-    expect(
-      plan.workOrders.map((order) => ({
-        agentSessionId: order.agentSessionId,
-        role: order.role,
-        status: order.status
-      }))
-    ).toEqual([
-      { agentSessionId: "agent-a", role: "contract_owner", status: "queued" },
-      { agentSessionId: "agent-b", role: "adapter", status: "queued" },
-      { agentSessionId: "agent-c", role: "adapter", status: "queued" }
-    ]);
-    expect(plan.workOrders[1]?.summary).toContain("agent-a owns Task contract");
+    expect(plan.episodes[0]?.ownerAgentSessionId).toBeUndefined();
+    expect(plan.workOrders).toEqual([]);
   });
 
   it("uses active split-ownership decisions and owner publications as the merge contract", () => {
@@ -115,7 +103,7 @@ describe("coordination episodes", () => {
     ).toContain("Task keeps title:string");
   });
 
-  it("keeps an existing episode owner stable and records RocketRide run ids", () => {
+  it("keeps a decision-backed episode owner stable and records RocketRide run ids", () => {
     const agents = [
       makeAgent("agent-a", "wt-a", 1),
       makeAgent("agent-b", "wt-b", 2),
@@ -147,7 +135,21 @@ describe("coordination episodes", () => {
         }
       ],
       agents,
-      decisions: [],
+      decisions: [
+        {
+          id: "decision-1",
+          repoId: "repo-1",
+          conflictId: "conflict-ab",
+          selectedOptionId: "split-ownership",
+          selectedOptionTitle: "Split ownership",
+          selectedOptionDirection: "Agent B owns Task contract.",
+          ownerAgentSessionId: "agent-b",
+          createdBy: "agent",
+          status: "active",
+          createdAt: now,
+          updatedAt: now
+        }
+      ],
       publications: [],
       existingEpisodes: [
         {
@@ -288,7 +290,7 @@ function stableEpisodeId(...worktreeIds: string[]): string {
   );
 }
 
-function makeConflict(id: string, worktreeIds: string[]): RebaseConflict {
+function makeConflict(id: string, worktreeIds: string[]): TempoConflict {
   return {
     id,
     repoId: "repo-1",

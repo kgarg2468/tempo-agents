@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest";
 import { redactForCloud } from "./privacy.js";
 
 describe("cloud privacy redaction", () => {
-  it("redacts secrets and .rebaseignore paths before cloud escalation", async () => {
-    const repoRoot = await mkdtemp(path.join(tmpdir(), "rebase-redact-"));
+  it("redacts secrets and .tempoignore paths before cloud escalation", async () => {
+    const repoRoot = await mkdtemp(path.join(tmpdir(), "tempo-redact-"));
     await mkdir(path.join(repoRoot, "secrets"), { recursive: true });
-    await writeFile(path.join(repoRoot, ".rebaseignore"), ".env\nsecrets/\n");
+    await writeFile(path.join(repoRoot, ".tempoignore"), ".env\nsecrets/\n");
 
     const result = redactForCloud(
       {

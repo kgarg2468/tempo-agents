@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "tempo-collision",
+  "description": "Required Tempo pipeline. Produces typed { conflicts, episodes } coordination grouping output.",
+  "x-tempo": {
+    "contract": "collisionRunOutput",
+    "intent": "Group N worktree fingerprints into coordination episodes instead of noisy pairwise alerts."
+  },
+  "source": "source_1",
+  "components": [
+    {
+      "id": "source_1",
+      "provider": "webhook",
+      "config": {
+        "key": "webhook://*",
+        "mode": "Source",
+        "name": "Tempo Collision Input",
+        "include": [{ "path": "*" }],
+        "parameters": {
+          "endpoint": "/pipe/process",
+          "port": 5565
+        },
+        "sync": false,
+        "type": "webhook"
+      },
+      "ui": {}
+    },
+    {
+      "id": "tempo_1",
+      "provider": "tempo_coordination",
+      "config": {
+        "operation": "collision"
+      },
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "source_1" }
+      ]
+    },
+    {
+      "id": "response_1",
+      "provider": "response",
+      "config": {},
+      "ui": {},
+      "input": [
+        { "lane": "text", "from": "tempo_1" }
+      ]
+    }
+  ]
+}

@@ -2,14 +2,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createRebaseStore } from "./store.js";
+import { createTempoStore } from "./store.js";
 
-describe("RebaseStore", () => {
+describe("TempoStore", () => {
   it("initializes tables and persists events across restarts", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-store-"));
-    const dbPath = path.join(dir, "rebase.sqlite");
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-store-"));
+    const dbPath = path.join(dir, "tempo.sqlite");
 
-    const first = createRebaseStore(dbPath);
+    const first = createTempoStore(dbPath);
     first.upsertRepo({
       id: "repo-1",
       rootPath: dir,
@@ -27,7 +27,7 @@ describe("RebaseStore", () => {
     });
     first.close();
 
-    const second = createRebaseStore(dbPath);
+    const second = createTempoStore(dbPath);
     expect(second.listEvents("repo-1")).toEqual([
       {
         id: "event-1",
@@ -42,9 +42,9 @@ describe("RebaseStore", () => {
   });
 
   it("persists conflict lifecycle updates", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-store-"));
-    const dbPath = path.join(dir, "rebase.sqlite");
-    const store = createRebaseStore(dbPath);
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-store-"));
+    const dbPath = path.join(dir, "tempo.sqlite");
+    const store = createTempoStore(dbPath);
 
     store.upsertRepo({
       id: "repo-1",
@@ -83,9 +83,9 @@ describe("RebaseStore", () => {
   });
 
   it("persists discovered worktrees", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-store-"));
-    const dbPath = path.join(dir, "rebase.sqlite");
-    const store = createRebaseStore(dbPath);
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-store-"));
+    const dbPath = path.join(dir, "tempo.sqlite");
+    const store = createTempoStore(dbPath);
 
     store.upsertWorktree({
       id: "wt-1",
@@ -114,7 +114,7 @@ describe("RebaseStore", () => {
   });
 
   it("marks worktrees missing when git no longer reports them", async () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
 
     store.upsertWorktree({
       id: "wt-active",
@@ -152,7 +152,7 @@ describe("RebaseStore", () => {
   });
 
   it("lists intervention history", async () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
 
     store.upsertIntervention({
       id: "intervention-1",
@@ -187,7 +187,7 @@ describe("RebaseStore", () => {
   });
 
   it("persists advisory options separately from interventions", async () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
 
     store.upsertAdvisory({
       id: "advisory-1",
@@ -213,10 +213,10 @@ describe("RebaseStore", () => {
   });
 
   it("persists owner contract publications", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "rebase-store-publication-"));
-    const dbPath = path.join(dir, "rebase.sqlite");
+    const dir = await mkdtemp(path.join(tmpdir(), "tempo-store-publication-"));
+    const dbPath = path.join(dir, "tempo.sqlite");
 
-    const first = createRebaseStore(dbPath);
+    const first = createTempoStore(dbPath);
     first.upsertContractPublication({
       id: "publication-1",
       repoId: "repo-1",
@@ -225,11 +225,21 @@ describe("RebaseStore", () => {
       surface: "Task contract",
       shapeSummary: "Task keeps required label and adds title { text, subtitle }.",
       files: ["src/shared/task.ts", "src/db/schema.ts"],
+      snapshotSetId: "snapshot-set-1",
+      fileSnapshots: [
+        {
+          path: "src/shared/task.ts",
+          sha256: "sha-1",
+          content: "export interface Task {}",
+          sizeBytes: 24,
+          capturedAt: 1778000000007
+        }
+      ],
       createdAt: 1778000000007
     });
     first.close();
 
-    const second = createRebaseStore(dbPath);
+    const second = createTempoStore(dbPath);
     expect(second.listContractPublications("repo-1")).toEqual([
       {
         id: "publication-1",
@@ -240,6 +250,16 @@ describe("RebaseStore", () => {
         shapeSummary:
           "Task keeps required label and adds title { text, subtitle }.",
         files: ["src/shared/task.ts", "src/db/schema.ts"],
+        snapshotSetId: "snapshot-set-1",
+        fileSnapshots: [
+          {
+            path: "src/shared/task.ts",
+            sha256: "sha-1",
+            content: "export interface Task {}",
+            sizeBytes: 24,
+            capturedAt: 1778000000007
+          }
+        ],
         createdAt: 1778000000007
       }
     ]);
@@ -247,7 +267,7 @@ describe("RebaseStore", () => {
   });
 
   it("persists coordination episodes and queued work orders", () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
 
     store.upsertCoordinationEpisode({
       id: "episode-1",
@@ -308,7 +328,7 @@ describe("RebaseStore", () => {
   });
 
   it("persists predictive merge-risk assessments", () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
 
     store.upsertMergeRiskAssessment({
       id: "merge-risk-1",
@@ -360,7 +380,7 @@ describe("RebaseStore", () => {
   });
 
   it("supersedes older active work order revisions for the same episode and agent", () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
 
     store.upsertWorkOrder({
       id: "work-order-agent-b-r1",
@@ -416,7 +436,7 @@ describe("RebaseStore", () => {
   });
 
   it("persists evidence packets and prunes expired local evidence", async () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
     store.upsertHookEvent({
       id: "hook-1",
       repoId: "repo-1",
@@ -500,7 +520,7 @@ describe("RebaseStore", () => {
   });
 
   it("persists cloud escalation packet redaction records", () => {
-    const store = createRebaseStore(":memory:");
+    const store = createTempoStore(":memory:");
     store.upsertCloudEscalationPacket({
       id: "cloud-1",
       repoId: "repo-1",
@@ -525,8 +545,8 @@ describe("RebaseStore", () => {
     store.close();
   });
 
-  it("persists native graph facts and links decisions to conflicts", () => {
-    const store = createRebaseStore(":memory:");
+  it("persists canonical graph facts for coordination decisions, episodes, work orders, and publications", () => {
+    const store = createTempoStore(":memory:");
     store.upsertGraphNode({
       id: "surface:task-model",
       repoId: "repo-1",
@@ -535,6 +555,56 @@ describe("RebaseStore", () => {
       refId: "task-model",
       metadata: { files: ["src/db/schema.ts"] },
       updatedAt: 1778000000000
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "type",
+      title: "Task contract overlap",
+      summary: "Two worktrees touched Task.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: ["wt-a", "wt-b"],
+      affectedSurfaces: ["Task model"],
+      evidence: ["src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000001
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "coordinating",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: ["wt-a", "wt-b"],
+      affectedAgentSessionIds: ["agent-a", "agent-b"],
+      conflictIds: ["conflict-1"],
+      ownerAgentSessionId: "agent-a",
+      rocketRideRunIds: [],
+      createdAt: 1778000000002,
+      updatedAt: 1778000000002
+    });
+    store.upsertWorkOrder({
+      id: "order-1",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: "agent-b",
+      role: "adapter",
+      status: "queued",
+      revision: 1,
+      title: "Adapt to Task contract",
+      summary: "Follow owner Task contract.",
+      requiredContract: "Task uses label.",
+      allowedFiles: ["src/shared/task.ts"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after adapting.",
+      createdAt: 1778000000003,
+      updatedAt: 1778000000003
     });
     store.upsertConflictDecision({
       id: "decision-1",
@@ -548,16 +618,51 @@ describe("RebaseStore", () => {
       createdAt: 1778000000001,
       updatedAt: 1778000000001
     });
+    store.upsertContractPublication({
+      id: "publication-1",
+      repoId: "repo-1",
+      conflictId: "conflict-1",
+      ownerAgentSessionId: "agent-a",
+      surface: "Task contract",
+      shapeSummary: "Task uses label.",
+      files: ["src/shared/task.ts"],
+      createdAt: 1778000000004
+    });
 
-    expect(store.listGraphNodes("repo-1").map((node) => node.kind)).toEqual([
-      "decision",
-      "surface"
-    ]);
-    expect(store.listGraphEdges("repo-1")[0]).toMatchObject({
+    expect(store.listGraphNodes("repo-1").map((node) => node.kind)).toEqual(
+      expect.arrayContaining([
+        "conflict",
+        "decision",
+        "episode",
+        "publication",
+        "surface",
+        "work_order"
+      ])
+    );
+    expect(store.listGraphEdges("repo-1")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
       sourceId: "decision:decision-1",
       targetId: "conflict:conflict-1",
       kind: "decides"
-    });
+        }),
+        expect.objectContaining({
+          sourceId: "episode:episode-1",
+          targetId: "conflict:conflict-1",
+          kind: "relates_to"
+        }),
+        expect.objectContaining({
+          sourceId: "work_order:order-1",
+          targetId: "episode:episode-1",
+          kind: "relates_to"
+        }),
+        expect.objectContaining({
+          sourceId: "publication:publication-1",
+          targetId: "episode:episode-1",
+          kind: "relates_to"
+        })
+      ])
+    );
     store.close();
   });
 });

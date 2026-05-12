@@ -1,8 +1,8 @@
-import type { Fingerprint, RebaseConflict } from "@rebase/shared";
+import type { Fingerprint, TempoConflict } from "@tempo/shared";
 
 export function activeSessionConflict(
-  conflicts: RebaseConflict[]
-): RebaseConflict | undefined {
+  conflicts: TempoConflict[]
+): TempoConflict | undefined {
   return conflicts.find(
     (conflict) => conflict.status === "open" || conflict.status === "acknowledged"
   );
@@ -12,7 +12,7 @@ export function surfaceLabelsForSessionGraph({
   conflicts
 }: {
   fingerprints: Fingerprint[];
-  conflicts: RebaseConflict[];
+  conflicts: TempoConflict[];
 }): string[] {
   const activeConflict = activeSessionConflict(conflicts);
   if (!activeConflict) return [];
@@ -21,7 +21,7 @@ export function surfaceLabelsForSessionGraph({
 
 export function targetSurfacesForFingerprint(
   fingerprint: Fingerprint,
-  activeConflict: RebaseConflict | undefined
+  activeConflict: TempoConflict | undefined
 ): string[] {
   if (
     activeConflict &&

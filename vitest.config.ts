@@ -3,8 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@rebase/shared": new URL("./packages/shared/src/index.ts", import.meta.url).pathname,
-      "@rebase/coordinator": new URL(
+      "@tempo/shared": new URL("./packages/shared/src/index.ts", import.meta.url).pathname,
+      "@tempo/coordinator": new URL(
         "./packages/coordinator/src/index.ts",
         import.meta.url
       ).pathname

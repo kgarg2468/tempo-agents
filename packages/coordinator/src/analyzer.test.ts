@@ -6,10 +6,10 @@ import { describe, expect, it } from "vitest";
 import { analyzeWorktreesOnce } from "./analyzer.js";
 
 async function createRepo() {
-  const dir = await mkdtemp(path.join(tmpdir(), "rebase-analyzer-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "tempo-analyzer-"));
   await execa("git", ["init", "-b", "main"], { cwd: dir });
-  await execa("git", ["config", "user.email", "rebase@example.com"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Rebase Test"], { cwd: dir });
+  await execa("git", ["config", "user.email", "tempo@example.com"], { cwd: dir });
+  await execa("git", ["config", "user.name", "Tempo Test"], { cwd: dir });
   await execa("mkdir", ["-p", path.join(dir, "src", "db")]);
   await writeFile(
     path.join(dir, "src", "db", "schema.ts"),
@@ -23,8 +23,8 @@ async function createRepo() {
 describe("worktree analyzer", () => {
   it("detects a live contract conflict across two dirty worktrees", async () => {
     const repo = await createRepo();
-    const wtA = path.join(path.dirname(repo), `rebase-a-${path.basename(repo)}`);
-    const wtB = path.join(path.dirname(repo), `rebase-b-${path.basename(repo)}`);
+    const wtA = path.join(path.dirname(repo), `tempo-a-${path.basename(repo)}`);
+    const wtB = path.join(path.dirname(repo), `tempo-b-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
     await execa("git", ["worktree", "add", "-b", "agent-b", wtB], { cwd: repo });
 
@@ -49,7 +49,7 @@ describe("worktree analyzer", () => {
 
   it("uses RocketRide fingerprint output as authoritative in required mode", async () => {
     const repo = await createRepo();
-    const wtA = path.join(path.dirname(repo), `rebase-a-${path.basename(repo)}`);
+    const wtA = path.join(path.dirname(repo), `tempo-a-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
     await writeFile(
       path.join(wtA, "src", "db", "schema.ts"),
@@ -96,7 +96,7 @@ describe("worktree analyzer", () => {
 
   it("rejects invalid RocketRide fingerprint output in required mode", async () => {
     const repo = await createRepo();
-    const wtA = path.join(path.dirname(repo), `rebase-a-${path.basename(repo)}`);
+    const wtA = path.join(path.dirname(repo), `tempo-a-${path.basename(repo)}`);
     await execa("git", ["worktree", "add", "-b", "agent-a", wtA], { cwd: repo });
     await writeFile(
       path.join(wtA, "src", "db", "schema.ts"),
@@ -122,7 +122,7 @@ describe("worktree analyzer", () => {
         }
       })
     ).rejects.toThrow(
-      "RocketRide rebase-fingerprint output did not match the required schema"
+      "RocketRide tempo-fingerprint output did not match the required schema"
     );
   });
 
@@ -158,12 +158,12 @@ describe("worktree analyzer", () => {
     expect(result.conflicts).toEqual([]);
   });
 
-  it("honors repo .rebaseignore entries when analyzing diffs", async () => {
+  it("honors repo .tempoignore entries when analyzing diffs", async () => {
     const repo = await createRepo();
     await mkdir(path.join(repo, "generated"), { recursive: true });
-    await writeFile(path.join(repo, ".rebaseignore"), "generated/\n");
+    await writeFile(path.join(repo, ".tempoignore"), "generated/\n");
     await writeFile(path.join(repo, "generated", "output.ts"), "export const value = 1;\n");
-    await execa("git", ["add", ".rebaseignore", "generated/output.ts"], { cwd: repo });
+    await execa("git", ["add", ".tempoignore", "generated/output.ts"], { cwd: repo });
     await execa("git", ["commit", "-m", "add generated fixture"], { cwd: repo });
     await writeFile(path.join(repo, "generated", "output.ts"), "export const value = 2;\n");
 

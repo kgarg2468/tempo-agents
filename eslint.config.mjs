@@ -11,9 +11,14 @@ export default [
       "**/.next/**",
       "coverage/**",
       "test-artifacts/**",
-      ".rebase/**",
+      ".tempo/**",
+      "**/.tempo/**",
       ".superpowers/**",
+      ".pytest_cache/**",
+      "**/.pytest_cache/**",
+      "**/__pycache__/**",
       "archive/**",
+      "demo/backups/**",
       "vitest.config.ts"
     ]
   },
