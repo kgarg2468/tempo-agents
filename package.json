@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "rebase": "node packages/cli/dist/index.js"
+    "rebase": "node packages/cli/dist/index.js",
+    "submission:readiness": "scripts/submission-readiness.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
