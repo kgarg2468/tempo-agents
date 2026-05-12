@@ -14,7 +14,9 @@ import {
   agentSessionSchema,
   interventionSchema,
   mergeRiskAssessmentSchema,
+  coordinationPlanSchema,
   tokenCostEstimateSchema,
+  workOrderSchema,
   worktreeSchema
 } from "./index.js";
 
@@ -136,6 +138,41 @@ describe("shared schemas", () => {
 
     expect(parsed.status).toBe("queued");
     expect(parsed.directive?.role).toBe("adapter");
+  });
+
+  it("validates OpenAI coordination plans and integration-owner work orders", () => {
+    const plan = coordinationPlanSchema.parse({
+      source: "openai",
+      strategy: "split_ownership",
+      rationale: "One agent owns the contract while another integrates overlapping files.",
+      ownerAgentSessionId: "agent-labels",
+      integrationOwnerAgentSessionId: "agent-labels",
+      workOrderIds: ["work-order-integration"],
+      requiredTerms: ["Task.label is required"],
+      validationChecklist: ["No same-hunk blockers remain"]
+    });
+
+    const order = workOrderSchema.parse({
+      id: "work-order-integration",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: "agent-labels",
+      role: "integration_owner",
+      status: "queued",
+      revision: 1,
+      title: "Integrate Task contract files",
+      summary: "Converge overlapping Task contract files to one text shape.",
+      requiredContract: "Task includes labels, reminders, and bulk metadata.",
+      allowedFiles: ["src/shared/task.ts", "src/app/api/tasks/route.ts"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after overlapping files are text-compatible.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+
+    expect(plan.source).toBe("openai");
+    expect(order.role).toBe("integration_owner");
   });
 
   it("validates compatibility classification and conflict decisions", () => {
@@ -330,6 +367,37 @@ describe("shared schemas", () => {
 
     expect(parsed.status).toBe("blocked");
     expect(parsed.predictedConflicts[0]?.blocking).toBe(true);
+  });
+
+  it("rejects safe merge-risk assessments with blocking predicted conflicts", () => {
+    expect(() =>
+      mergeRiskAssessmentSchema.parse({
+        id: "merge-risk-unsafe-safe",
+        repoId: "repo-1",
+        episodeId: "episode-1",
+        status: "safe",
+        risk: "low",
+        safe: true,
+        diffHash: "diff-a+diff-b",
+        predictedConflicts: [
+          {
+            id: "predicted-1",
+            risk: "high",
+            reasonCode: "same_hunk",
+            summary: "Two worktrees edit the same Task hunk.",
+            files: ["src/shared/task.ts"],
+            symbols: ["Task"],
+            affectedWorktreeIds: ["wt-a", "wt-b"],
+            evidence: ["Overlapping hunks in src/shared/task.ts"],
+            blocking: true
+          }
+        ],
+        warnings: [],
+        requiredWorkOrders: [],
+        evidence: [],
+        createdAt: 1778000000000
+      })
+    ).toThrow("blocking predicted conflicts remain");
   });
 
   it("validates debate verdicts and token-cost estimates on conflicts", () => {

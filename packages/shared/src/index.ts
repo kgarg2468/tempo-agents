@@ -324,6 +324,7 @@ export type ContractPublication = z.infer<typeof contractPublicationSchema>;
 
 export const interventionDirectiveRoleSchema = z.enum([
   "contract_owner",
+  "integration_owner",
   "adapter",
   "pause_only",
   "compatibility_owner"
@@ -402,22 +403,60 @@ export const mergeRiskEvidenceSchema = z.object({
 });
 export type MergeRiskEvidence = z.infer<typeof mergeRiskEvidenceSchema>;
 
-export const mergeRiskAssessmentSchema = z.object({
-  id: z.string().min(1),
-  repoId: z.string().min(1),
-  episodeId: z.string().min(1),
-  status: mergeRiskStatusSchema,
-  risk: riskLevelSchema,
-  safe: z.boolean(),
-  diffHash: z.string().min(1),
-  rocketRideRunId: z.string().min(1).optional(),
-  predictedConflicts: z.array(predictedMergeConflictSchema).default([]),
-  warnings: z.array(z.string().min(1)).default([]),
-  requiredWorkOrders: z.array(z.string().min(1)).default([]),
-  evidence: z.array(mergeRiskEvidenceSchema).default([]),
-  createdAt: z.number()
-});
+export const mergeRiskAssessmentSchema = z
+  .object({
+    id: z.string().min(1),
+    repoId: z.string().min(1),
+    episodeId: z.string().min(1),
+    status: mergeRiskStatusSchema,
+    risk: riskLevelSchema,
+    safe: z.boolean(),
+    diffHash: z.string().min(1),
+    rocketRideRunId: z.string().min(1).optional(),
+    predictedConflicts: z.array(predictedMergeConflictSchema).default([]),
+    warnings: z.array(z.string().min(1)).default([]),
+    requiredWorkOrders: z.array(z.string().min(1)).default([]),
+    evidence: z.array(mergeRiskEvidenceSchema).default([]),
+    createdAt: z.number()
+  })
+  .superRefine((assessment, context) => {
+    const hasBlockingConflict = assessment.predictedConflicts.some(
+      (conflict) => conflict.blocking
+    );
+    if (assessment.safe && hasBlockingConflict) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Merge risk cannot be safe while blocking predicted conflicts remain",
+        path: ["safe"]
+      });
+    }
+    if (assessment.safe && assessment.risk === "high") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Merge risk cannot be safe while risk is high",
+        path: ["risk"]
+      });
+    }
+  });
 export type MergeRiskAssessment = z.infer<typeof mergeRiskAssessmentSchema>;
+
+export const coordinationPlanSchema = z.object({
+  source: z.enum(["openai", "deterministic"]),
+  strategy: z.enum([
+    "split_ownership",
+    "integration_owner",
+    "pause",
+    "proceed"
+  ]),
+  rationale: z.string().min(1).max(2000),
+  ownerAgentSessionId: z.string().min(1).optional(),
+  integrationOwnerAgentSessionId: z.string().min(1).optional(),
+  workOrderIds: z.array(z.string().min(1)).default([]),
+  requiredTerms: z.array(z.string().min(1)).default([]),
+  validationChecklist: z.array(z.string().min(1)).default([])
+});
+export type CoordinationPlan = z.infer<typeof coordinationPlanSchema>;
 
 export const workOrderSchema = z.object({
   id: z.string().min(1),
