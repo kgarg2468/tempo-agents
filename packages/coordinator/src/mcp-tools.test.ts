@@ -314,6 +314,107 @@ describe("Rebase MCP tool handlers", () => {
     store.close();
   });
 
+  it("treats one user decision as episode-scoped across sibling conflicts", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-episode-decision-"));
+    const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: dir,
+      store
+    });
+
+    const labels = handlers.join({
+      cwd: path.join(dir, "labels"),
+      agentKind: "codex",
+      displayName: "labels-agent"
+    });
+    const reminders = handlers.join({
+      cwd: path.join(dir, "reminders"),
+      agentKind: "codex",
+      displayName: "reminders-agent"
+    });
+    const bulk = handlers.join({
+      cwd: path.join(dir, "bulk"),
+      agentKind: "codex",
+      displayName: "bulk-agent"
+    });
+    for (const conflict of [
+      {
+        id: "conflict-labels-reminders",
+        affectedWorktreeIds: [labels.worktreeId, reminders.worktreeId]
+      },
+      {
+        id: "conflict-labels-bulk",
+        affectedWorktreeIds: [labels.worktreeId, bulk.worktreeId]
+      }
+    ]) {
+      store.upsertConflict({
+        id: conflict.id,
+        repoId: "repo-1",
+        status: "open",
+        risk: "high",
+        confidence: 0.86,
+        type: "schema",
+        title: "Task contract overlap",
+        summary: "Parallel worktrees touched the Task contract.",
+        primarySurface: "Task contract",
+        affectedWorktreeIds: conflict.affectedWorktreeIds,
+        affectedSurfaces: ["Task type"],
+        evidence: ["File overlap: src/shared/task.ts"],
+        riskReasons: [],
+        createdAt: 1778000000000,
+        updatedAt: 1778000000000
+      });
+    }
+    store.upsertCoordinationEpisode({
+      id: "episode-task-contract",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "blocked",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [labels.worktreeId, reminders.worktreeId, bulk.worktreeId],
+      affectedAgentSessionIds: [
+        labels.sessionId,
+        reminders.sessionId,
+        bulk.sessionId
+      ],
+      conflictIds: ["conflict-labels-reminders", "conflict-labels-bulk"],
+      rocketRideRunIds: ["rr-1"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+
+    const decision = handlers.recordDecision({
+      sessionId: labels.sessionId,
+      conflictId: "conflict-labels-reminders",
+      selectedOptionId: "split-ownership",
+      selectedOptionTitle: "Split ownership",
+      selectedOptionDirection:
+        "Labels owns the integrated Task contract; other agents adapt.",
+      ownerAgentSessionId: labels.sessionId,
+      createdBy: "agent"
+    });
+    const staleSibling = handlers.recordDecision({
+      sessionId: bulk.sessionId,
+      conflictId: "conflict-labels-bulk",
+      selectedOptionId: "pause",
+      selectedOptionTitle: "Pause",
+      selectedOptionDirection: "Pause this separate pairwise conflict.",
+      createdBy: "agent"
+    });
+    const bulkCheckpoint = handlers.checkpoint({ sessionId: bulk.sessionId });
+
+    expect(decision.alreadyDecided).toBe(false);
+    expect(decision.interventions).toHaveLength(3);
+    expect(staleSibling.alreadyDecided).toBe(true);
+    expect(staleSibling.decision.id).toBe(decision.decision.id);
+    expect(bulkCheckpoint.choices).toEqual([]);
+    expect(bulkCheckpoint.activeDecisions).toHaveLength(1);
+
+    store.close();
+  });
+
   it("delivers an automatic work order before a manual decision, then later delivers the decision", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rebase-mcp-manual-handoff-"));
     const store = createRebaseStore(path.join(dir, "rebase.sqlite"));
@@ -1381,6 +1482,146 @@ describe("Rebase MCP tool handlers", () => {
         .find((order) => order.agentSessionId === adapter.sessionId)?.status
     ).toBe("completed");
 
+    store.close();
+  });
+
+  it("does not auto-complete integration owner work orders before merge risk is safe", () => {
+    const store = createRebaseStore(":memory:");
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: "/tmp/repo",
+      store
+    });
+    const integration = handlers.join({
+      cwd: "/tmp/repo/integration",
+      agentKind: "codex",
+      coordinationRole: "integration",
+      displayName: "integration-agent"
+    });
+    store.upsertConflict({
+      id: "conflict-1",
+      repoId: "repo-1",
+      status: "open",
+      risk: "high",
+      confidence: 0.9,
+      type: "schema",
+      title: "Task contract overlap",
+      summary: "Shared Task files still overlap.",
+      primarySurface: "Task contract",
+      affectedWorktreeIds: [integration.worktreeId, "peer-worktree"],
+      affectedSurfaces: ["Task type"],
+      evidence: ["File overlap: src/shared/task.ts"],
+      riskReasons: [],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "blocked",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [integration.worktreeId, "peer-worktree"],
+      affectedAgentSessionIds: [integration.sessionId],
+      conflictIds: ["conflict-1"],
+      rocketRideRunIds: ["rr-1"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertWorkOrder({
+      id: "integration-order",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: integration.sessionId,
+      role: "integration_owner",
+      status: "queued",
+      revision: 1,
+      title: "Integrate Task files",
+      summary: "Align exact overlapping Task files.",
+      requiredContract: "Integrate exact file text.",
+      allowedFiles: ["src/shared/task.ts"],
+      blockedFiles: [],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after RocketRide reports no blocking merge risk.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+
+    const checkpoint = handlers.checkpoint({ sessionId: integration.sessionId });
+
+    expect(checkpoint.pause).toBe(true);
+    expect(checkpoint.notifications.join("\n")).toContain("safe merge risk");
+    expect(store.listWorkOrders("repo-1")[0]?.status).toBe("fetched");
+    store.close();
+  });
+
+  it("hard-pauses an adapter that still touches files blocked by its work order", () => {
+    const store = createRebaseStore(":memory:");
+    const handlers = createMcpToolHandlers({
+      repoId: "repo-1",
+      repoRoot: "/tmp/repo",
+      store
+    });
+    const adapter = handlers.join({
+      cwd: "/tmp/repo/adapter",
+      agentKind: "codex",
+      displayName: "adapter-agent"
+    });
+    store.upsertFingerprint({
+      id: "fingerprint-1",
+      repoId: "repo-1",
+      worktreeId: adapter.worktreeId,
+      diffHash: "diff-1",
+      createdAt: 1778000000000,
+      filesTouched: ["src/shared/task.ts", "src/components/TodoApp.tsx"],
+      symbols: { added: [], modified: ["Task"], removed: [] },
+      surfaces: [],
+      semanticSummary: "Adapter still edits the Task contract.",
+      contractChanges: [],
+      confidence: 0.9,
+      source: "heuristic"
+    });
+    store.upsertCoordinationEpisode({
+      id: "episode-1",
+      repoId: "repo-1",
+      surface: "Task contract",
+      status: "blocked",
+      risk: "high",
+      confidence: 0.9,
+      affectedWorktreeIds: [adapter.worktreeId, "owner-worktree"],
+      affectedAgentSessionIds: [adapter.sessionId],
+      conflictIds: ["conflict-1"],
+      rocketRideRunIds: ["rr-1"],
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+    store.upsertWorkOrder({
+      id: "adapter-order",
+      repoId: "repo-1",
+      episodeId: "episode-1",
+      agentSessionId: adapter.sessionId,
+      role: "adapter",
+      status: "queued",
+      revision: 1,
+      title: "Adapt to Task contract",
+      summary: "Stop editing shared Task files.",
+      requiredContract: "Do not edit blocked shared files.",
+      allowedFiles: ["src/components/**"],
+      blockedFiles: ["src/shared/task.ts"],
+      sharedFiles: ["src/shared/task.ts"],
+      nextCheckpoint: "Checkpoint after removing blocked-file edits.",
+      createdAt: 1778000000000,
+      updatedAt: 1778000000000
+    });
+
+    const checkpoint = handlers.checkpoint({ sessionId: adapter.sessionId });
+
+    expect(checkpoint.pause).toBe(true);
+    expect(checkpoint.notifications.join("\n")).toContain(
+      "blocked files touched: src/shared/task.ts"
+    );
+    expect(store.listWorkOrders("repo-1")[0]?.status).toBe("fetched");
     store.close();
   });
 });

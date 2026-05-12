@@ -11,6 +11,7 @@ import type {
   RebaseConflict,
   WorkOrder
 } from "@rebase/shared";
+import { execFileSync } from "node:child_process";
 import { nanoid } from "nanoid";
 import { createHeuristicAdvisory } from "./advisory.js";
 import { buildCoordinationEpisodes } from "./episodes.js";
@@ -299,7 +300,11 @@ export function createMcpToolHandlers(context: McpToolContext) {
       );
       const unresolvedConflicts = blockingConflicts.filter(
         (conflict) =>
-          !context.store.getActiveConflictDecision(conflict.id) &&
+          !activeDecisionForConflictOrEpisode(
+            context.store,
+            context.repoId,
+            conflict
+          ) &&
           !episodeManagedConflictIds.has(conflict.id)
       );
       const activeDecisions = activeDecisionBriefsForConflicts(
@@ -486,19 +491,28 @@ export function createMcpToolHandlers(context: McpToolContext) {
     },
 
     recordDecision(input: RecordDecisionInput): RecordDecisionResult {
-      const existing = context.store.getActiveConflictDecision(input.conflictId);
+      const conflict = context.store
+        .listConflicts(context.repoId)
+        .find((candidate) => candidate.id === input.conflictId);
+      if (!conflict) {
+        throw new Error(`Conflict ${input.conflictId} not found`);
+      }
+      const episode = coordinationEpisodeForConflict(
+        context.store,
+        context.repoId,
+        input.conflictId
+      );
+      const existing = activeDecisionForConflictOrEpisode(
+        context.store,
+        context.repoId,
+        conflict
+      );
       if (existing) {
         return {
           decision: existing,
           interventions: [],
           alreadyDecided: true
         };
-      }
-      const conflict = context.store
-        .listConflicts(context.repoId)
-        .find((candidate) => candidate.id === input.conflictId);
-      if (!conflict) {
-        throw new Error(`Conflict ${input.conflictId} not found`);
       }
 
       const now = Date.now();
@@ -525,6 +539,7 @@ export function createMcpToolHandlers(context: McpToolContext) {
         store: context.store,
         repoId: context.repoId,
         conflict,
+        episode,
         decision,
         createdAt: now
       });
@@ -773,7 +788,7 @@ function ensureQueuedDirectionsForSession(
     repoId,
     session
   )) {
-    const decision = store.getActiveConflictDecision(conflict.id);
+    const decision = activeDecisionForConflictOrEpisode(store, repoId, conflict);
     if (!decision) continue;
 
     const relevantPublications = publications
@@ -815,8 +830,7 @@ function ensureQueuedDirectionsForSession(
     }
 
     if (
-      hasInterventionForSession(interventions, {
-        conflictId: conflict.id,
+      hasScopedInterventionForSession(interventions, {
         sessionId,
         draft: decision.selectedOptionDirection,
         createdAt: decision.createdAt
@@ -858,6 +872,22 @@ function hasInterventionForSession(
   );
 }
 
+function hasScopedInterventionForSession(
+  interventions: Intervention[],
+  input: {
+    sessionId: string;
+    draft: string;
+    createdAt: number;
+  }
+): boolean {
+  return interventions.some(
+    (intervention) =>
+      intervention.createdAt >= input.createdAt &&
+      intervention.draft === input.draft &&
+      intervention.targetAgentSessionIds.includes(input.sessionId)
+  );
+}
+
 function conflictsForSession(
   store: RebaseStore,
   repoId: string,
@@ -888,7 +918,7 @@ function choicesForSession(
       (conflict) =>
         conflict.classification?.kind !== "coordination_notice" &&
         !isIntegrationConflict(store, repoId, conflict) &&
-        !store.getActiveConflictDecision(conflict.id)
+        !activeDecisionForConflictOrEpisode(store, repoId, conflict)
     )
   );
 }
@@ -941,14 +971,20 @@ function evaluateWorkOrdersForCheckpoint(input: {
 }): WorkOrderEvaluation[] {
   return input.workOrders
     .filter((workOrder) => workOrder.status !== "completed")
+    .filter((workOrder) => {
+      const episode = input.coordinationEpisodes.find(
+        (candidate) => candidate.id === workOrder.episodeId
+      );
+      return !(
+        episode &&
+        isIntegrationEpisode(input.store, input.repoId, episode) &&
+        workOrder.role !== "integration_owner"
+      );
+    })
     .map((workOrder) => {
       const episode = input.coordinationEpisodes.find(
         (candidate) => candidate.id === workOrder.episodeId
       );
-      if (episode && isIntegrationEpisode(input.store, input.repoId, episode)) {
-        input.store.markWorkOrderCompleted(workOrder.id, input.evaluatedAt);
-        return { workOrder, satisfied: true, missingTerms: [] };
-      }
       const evaluation = evaluateWorkOrder({
         store: input.store,
         repoId: input.repoId,
@@ -981,6 +1017,35 @@ function evaluateWorkOrder(input: {
   workOrder: WorkOrder;
   episode?: CoordinationEpisode | undefined;
 }): WorkOrderEvaluation {
+  const blockedFiles = blockedFileViolations({
+    store: input.store,
+    repoId: input.repoId,
+    session: input.session,
+    workOrder: input.workOrder
+  });
+  if (blockedFiles.length > 0) {
+    return {
+      workOrder: input.workOrder,
+      satisfied: false,
+      missingTerms: [`blocked files touched: ${blockedFiles.join(", ")}`]
+    };
+  }
+
+  if (input.workOrder.role === "integration_owner") {
+    const latestRisk = input.store
+      .listLatestMergeRiskAssessments(input.repoId)
+      .find((assessment) => assessment.episodeId === input.workOrder.episodeId);
+    const safe =
+      latestRisk?.safe === true &&
+      latestRisk.status === "safe" &&
+      latestRisk.predictedConflicts.every((conflict) => !conflict.blocking);
+    return {
+      workOrder: input.workOrder,
+      satisfied: safe,
+      missingTerms: safe ? [] : ["safe merge risk"]
+    };
+  }
+
   if (input.workOrder.role === "contract_owner") {
     const ownerPublished = input.episode
       ? hasOwnerPublicationForEpisode({
@@ -1057,6 +1122,105 @@ function latestFingerprintEvidence(input: {
   ].join("\n");
 }
 
+function blockedFileViolations(input: {
+  store: RebaseStore;
+  repoId: string;
+  session: AgentSession;
+  workOrder: WorkOrder;
+}): string[] {
+  if (input.workOrder.blockedFiles.length === 0) return [];
+  const touchedFiles = touchedFilesForSession(input);
+  return touchedFiles.filter((file) =>
+    input.workOrder.blockedFiles.some((pattern) => pathPatternMatches(pattern, file))
+  );
+}
+
+function touchedFilesForSession(input: {
+  store: RebaseStore;
+  repoId: string;
+  session: AgentSession;
+}): string[] {
+  const files = new Set<string>();
+  if (input.session.worktreeId) {
+    const fingerprint = input.store
+      .listFingerprints(input.repoId)
+      .filter((candidate) => candidate.worktreeId === input.session.worktreeId)
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    for (const file of fingerprint?.filesTouched ?? []) {
+      files.add(file);
+    }
+  }
+
+  for (const file of gitChangedFiles(input.session.cwd)) {
+    files.add(file);
+  }
+  return [...files].sort((left, right) => left.localeCompare(right));
+}
+
+function gitChangedFiles(cwd: string): string[] {
+  try {
+    const diff = execFileSync("git", ["-C", cwd, "diff", "--name-only"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const untracked = execFileSync(
+      "git",
+      ["-C", cwd, "ls-files", "--others", "--exclude-standard"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }
+    );
+    return [...diff.split("\n"), ...untracked.split("\n")]
+      .map((file) => file.trim())
+      .filter(Boolean);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function pathPatternMatches(pattern: string, file: string): boolean {
+  if (pattern === file) return true;
+  if (pattern.endsWith("/**")) {
+    return file.startsWith(pattern.slice(0, -2));
+  }
+  if (pattern.endsWith("*")) {
+    return file.startsWith(pattern.slice(0, -1));
+  }
+  return false;
+}
+
+function coordinationEpisodeForConflict(
+  store: RebaseStore,
+  repoId: string,
+  conflictId: string
+): CoordinationEpisode | undefined {
+  return store
+    .listCoordinationEpisodes(repoId)
+    .filter((episode) => episode.status !== "resolved")
+    .find((episode) => episode.conflictIds.includes(conflictId));
+}
+
+function activeDecisionForConflictOrEpisode(
+  store: RebaseStore,
+  repoId: string,
+  conflict: RebaseConflict
+): ConflictDecision | null {
+  const episode = coordinationEpisodeForConflict(store, repoId, conflict.id);
+  const scopedConflictIds = new Set(episode?.conflictIds ?? [conflict.id]);
+  const decisions = store
+    .listConflictDecisions(repoId)
+    .filter(
+      (decision) =>
+        decision.status === "active" && scopedConflictIds.has(decision.conflictId)
+    )
+    .sort(
+      (left, right) =>
+        left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+    );
+  return decisions[0] ?? null;
+}
+
 function activeDecisionBriefsForSession(
   store: RebaseStore,
   repoId: string,
@@ -1078,9 +1242,16 @@ function activeDecisionBriefsForConflicts(
   store: RebaseStore,
   conflicts: RebaseConflict[]
 ): ActiveDecisionBrief[] {
+  const seen = new Set<string>();
   return conflicts.flatMap((conflict) => {
-    const decision = store.getActiveConflictDecision(conflict.id);
+    const decision = activeDecisionForConflictOrEpisode(
+      store,
+      conflict.repoId,
+      conflict
+    );
     if (!decision) return [];
+    if (seen.has(decision.id)) return [];
+    seen.add(decision.id);
     return [
       {
         conflictId: decision.conflictId,
@@ -1124,20 +1295,28 @@ function queueDecisionInterventions({
   store,
   repoId,
   conflict,
+  episode,
   decision,
   createdAt
 }: {
   store: RebaseStore;
   repoId: string;
   conflict: RebaseConflict;
+  episode?: CoordinationEpisode | undefined;
   decision: ConflictDecision;
   createdAt: number;
 }): Intervention[] {
   const agents = store.listAgentSessions(repoId);
   const fingerprints = store.listFingerprints(repoId);
+  const episodeAgentIds = episode
+    ? new Set(episode.affectedAgentSessionIds)
+    : null;
   const targetAgents = agents.filter(
     (agent) =>
-      agent.worktreeId !== null && conflict.affectedWorktreeIds.includes(agent.worktreeId)
+      agent.worktreeId !== null &&
+      (episodeAgentIds
+        ? episodeAgentIds.has(agent.id)
+        : conflict.affectedWorktreeIds.includes(agent.worktreeId))
   );
   const interventions = targetAgents.map((agent, index) =>
     buildDecisionIntervention({
@@ -1236,7 +1415,7 @@ function publishContractShape({
     sessionId: session.id,
     conflictId: conflict.id
   });
-  const decision = store.getActiveConflictDecision(conflict.id);
+  const decision = activeDecisionForConflictOrEpisode(store, repoId, conflict);
   if (decision?.ownerAgentSessionId && decision.ownerAgentSessionId !== session.id) {
     throw new Error("Only the assigned contract owner can publish this shape");
   }
@@ -1498,10 +1677,16 @@ function waitingForOwnerPublication(
     repoId,
     session
   )) {
-    const decision = store.getActiveConflictDecision(conflict.id);
+    const decision = activeDecisionForConflictOrEpisode(store, repoId, conflict);
     if (!decision?.ownerAgentSessionId) continue;
     if (decision.ownerAgentSessionId === sessionId) continue;
-    if (publications.some((publication) => publication.conflictId === conflict.id)) {
+    const episode = coordinationEpisodeForConflict(store, repoId, conflict.id);
+    const publicationConflictIds = new Set(episode?.conflictIds ?? [conflict.id]);
+    if (
+      publications.some((publication) =>
+        publicationConflictIds.has(publication.conflictId)
+      )
+    ) {
       continue;
     }
     return {
@@ -1547,19 +1732,18 @@ function conflictsWithActiveDecisionsForSession(
   session: AgentSession
 ): RebaseConflict[] {
   if (!session.worktreeId) return [];
-  const decisionsByConflictId = new Map(
-    store
-      .listConflictDecisions(repoId)
-      .filter((decision) => decision.status === "active")
-      .map((decision) => [decision.conflictId, decision])
-  );
+  const seenDecisionIds = new Set<string>();
   return store
     .listConflicts(repoId)
-    .filter(
-      (conflict) =>
-        decisionsByConflictId.has(conflict.id) &&
-        conflict.affectedWorktreeIds.includes(session.worktreeId ?? "")
-    );
+    .filter((conflict) => {
+      if (!conflict.affectedWorktreeIds.includes(session.worktreeId ?? "")) {
+        return false;
+      }
+      const decision = activeDecisionForConflictOrEpisode(store, repoId, conflict);
+      if (!decision || seenDecisionIds.has(decision.id)) return false;
+      seenDecisionIds.add(decision.id);
+      return true;
+    });
 }
 
 function sleep(ms: number): Promise<void> {
